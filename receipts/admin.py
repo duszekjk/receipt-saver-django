@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 from django.contrib import admin, messages
 from django.utils.html import format_html
@@ -44,14 +46,30 @@ class AppLoginTokenAdmin(admin.ModelAdmin):
     list_display = ('id', 'profile', 'name', 'device_id', 'is_active', 'created_at', 'last_used_at')
     list_filter = ('is_active', 'created_at')
     search_fields = ('profile__user__username', 'profile__display_name', 'device_id', 'name')
-    readonly_fields = ('device_id', 'secret_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
-    fields = ('profile', 'name', 'is_active', 'device_id', 'secret_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
+    readonly_fields = ('device_id', 'secret_preview', 'qr_code_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
+    fields = ('profile', 'name', 'is_active', 'device_id', 'secret_preview', 'qr_code_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
     actions = ['create_new_token_for_selected_profiles']
 
     def secret_preview(self, obj):
         if not obj or not obj.secret_key:
             return '-'
         return f'{obj.secret_key[:8]}...{obj.secret_key[-8:]}'
+
+    def qr_payload_text(self, obj):
+        return json.dumps(obj.qr_payload(), separators=(',', ':'))
+
+    def qr_code_preview(self, obj):
+        if not obj or not obj.secret_key:
+            return '-'
+        try:
+            import qrcode
+            image = qrcode.make(self.qr_payload_text(obj))
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            encoded = base64.b64encode(buffer.getvalue()).decode('ascii')
+            return format_html('<img alt="QR login token" width="320" height="320" src="data:image/png;base64,{}" />', encoded)
+        except Exception as exc:
+            return format_html('<p>QR generation failed: {}</p>', exc)
 
     def qr_payload_preview(self, obj):
         if not obj or not obj.secret_key:
@@ -64,7 +82,7 @@ class AppLoginTokenAdmin(admin.ModelAdmin):
         for token in queryset.select_related('profile'):
             AppLoginToken.create_for_profile(token.profile, name=f'{token.name} replacement'.strip())
             created += 1
-        self.message_user(request, f'Created {created} replacement token(s). Open each new token to copy QR payload.', messages.SUCCESS)
+        self.message_user(request, f'Created {created} replacement token(s). Open each new token to scan QR payload.', messages.SUCCESS)
 
 
 @admin.register(Receipt)
