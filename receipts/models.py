@@ -1,10 +1,79 @@
+import secrets
+import uuid
 from decimal import Decimal
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
+
+
+class Family(models.Model):
+    name = models.CharField(max_length=160)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = 'families'
+
+    def __str__(self):
+        return self.name
+
+
+class ReceiptUserProfile(models.Model):
+    ROLE_MEMBER = 'member'
+    ROLE_MANAGER = 'manager'
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, related_name='receipt_profile', on_delete=models.CASCADE)
+    family = models.ForeignKey(Family, related_name='members', null=True, blank=True, on_delete=models.SET_NULL)
+    display_name = models.CharField(max_length=160, blank=True)
+    description = models.TextField(blank=True)
+    photo = models.ImageField(upload_to='receipt_profiles/', null=True, blank=True)
+    role = models.CharField(max_length=24, choices=[(ROLE_MEMBER, 'Member'), (ROLE_MANAGER, 'Family manager')], default=ROLE_MEMBER)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.display_name or self.user.get_username()
+
+
+class AppLoginToken(models.Model):
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='app_tokens', on_delete=models.CASCADE)
+    device_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    name = models.CharField(max_length=160, blank=True)
+    secret_key = models.CharField(max_length=128, editable=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    @classmethod
+    def create_for_profile(cls, profile, name=''):
+        return cls.objects.create(profile=profile, name=name, secret_key=secrets.token_urlsafe(64))
+
+    def qr_payload(self):
+        return {
+            'type': 'receipt_saver_login',
+            'device_id': str(self.device_id),
+            'secret_key': self.secret_key,
+        }
+
+    def mark_used(self):
+        self.last_used_at = timezone.now()
+        self.save(update_fields=['last_used_at'])
+
+    def __str__(self):
+        return f'{self.profile} / {self.device_id}'
+
+
+class AppLoginNonce(models.Model):
+    token = models.ForeignKey(AppLoginToken, related_name='nonces', on_delete=models.CASCADE)
+    nonce = models.CharField(max_length=128)
+    timestamp = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('token', 'nonce')]
 
 
 class Receipt(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     image = models.ImageField(upload_to='receipts/%Y/%m/')
     merchant_name = models.CharField(max_length=255, blank=True)
     merchant_normalized = models.CharField(max_length=255, blank=True, db_index=True)
@@ -41,6 +110,7 @@ class ReceiptItem(models.Model):
 
 class BankTransaction(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     bank = models.CharField(max_length=32, default='unknown')
     booked_at = models.DateField(null=True, blank=True, db_index=True)
     transaction_at = models.DateField(null=True, blank=True, db_index=True)
