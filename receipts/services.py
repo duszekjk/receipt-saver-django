@@ -7,8 +7,13 @@ from .openai_receipts import parse_receipt_image
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
 
+def user_family(user):
+    profile = getattr(user, 'receipt_profile', None)
+    return profile.family if profile and profile.family_id else None
+
+
 def create_receipt_from_image(user, image_file) -> Receipt:
-    receipt = Receipt.objects.create(user=user, image=image_file)
+    receipt = Receipt.objects.create(user=user, family=user_family(user), image=image_file)
     data = parse_receipt_image(receipt.image.path)
     data['_ocr_image_path'] = receipt.image.path
     data['_ocr_image_source'] = 'original'
@@ -64,7 +69,11 @@ def receipt_similarity(a: Receipt, b: Receipt):
 
 
 def find_duplicate_receipt(receipt: Receipt):
-    qs = Receipt.objects.filter(user=receipt.user, total_amount__isnull=False).exclude(id=receipt.id)
+    qs = Receipt.objects.filter(total_amount__isnull=False).exclude(id=receipt.id)
+    if receipt.family_id:
+        qs = qs.filter(family=receipt.family)
+    else:
+        qs = qs.filter(user=receipt.user)
     if receipt.purchased_at:
         qs = qs.filter(purchased_at__date__range=[receipt.purchased_at.date() - timedelta(days=1), receipt.purchased_at.date() + timedelta(days=1)])
     best = None
@@ -95,7 +104,11 @@ def match_bank_transactions_for_receipt(receipt: Receipt):
         return []
     start = receipt.purchased_at.date() - timedelta(days=1)
     end = receipt.purchased_at.date() + timedelta(days=7)
-    candidates = BankTransaction.objects.filter(user=receipt.user, matched_receipt__isnull=True, booked_at__range=[start, end], amount__lt=0)
+    candidates = BankTransaction.objects.filter(matched_receipt__isnull=True, booked_at__range=[start, end], amount__lt=0)
+    if receipt.family_id:
+        candidates = candidates.filter(family=receipt.family)
+    else:
+        candidates = candidates.filter(user=receipt.user)
     results = []
     for tx in candidates:
         score, reason = match_score(receipt, tx)
