@@ -31,6 +31,22 @@ class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
         return visible_receipts(self.request.user).prefetch_related('items').order_by('-purchased_at', '-id')
 
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def me(request):
+    profile = getattr(request.user, 'receipt_profile', None)
+    family = user_family(request.user)
+    return Response({
+        'user_id': request.user.id,
+        'username': request.user.get_username(),
+        'is_superuser': request.user.is_superuser,
+        'profile_id': profile.id if profile else None,
+        'display_name': profile.display_name if profile else '',
+        'family_id': family.id if family else None,
+        'family_name': family.name if family else '',
+    })
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def scan_receipt(request):
