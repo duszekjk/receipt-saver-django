@@ -9,12 +9,26 @@ from .serializers import MatchCandidateSerializer, ReceiptSerializer
 from .services import create_receipt_from_image, match_bank_transactions_for_receipt
 
 
+def user_family(user):
+    profile = getattr(user, 'receipt_profile', None)
+    return profile.family if profile and profile.family_id else None
+
+
+def visible_receipts(user):
+    if user.is_superuser:
+        return Receipt.objects.all()
+    family = user_family(user)
+    if family:
+        return Receipt.objects.filter(family=family)
+    return Receipt.objects.filter(user=user)
+
+
 class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ReceiptSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Receipt.objects.filter(user=self.request.user).prefetch_related('items').order_by('-purchased_at', '-id')
+        return visible_receipts(self.request.user).prefetch_related('items').order_by('-purchased_at', '-id')
 
 
 @api_view(['POST'])
@@ -24,6 +38,10 @@ def scan_receipt(request):
     if not image:
         return Response({'error': 'Missing image'}, status=400)
     receipt = create_receipt_from_image(request.user, image)
+    family = user_family(request.user)
+    if family and not receipt.family_id:
+        receipt.family = family
+        receipt.save(update_fields=['family'])
     return Response(ReceiptSerializer(receipt).data)
 
 
@@ -34,15 +52,13 @@ def import_bank_statement(request):
     bank = request.data.get('bank', 'unknown')
     if not file:
         return Response({'error': 'Missing file'}, status=400)
-
+    family = user_family(request.user)
     created = 0
     for row in parse_bank_csv(file, bank):
-        BankTransaction.objects.create(user=request.user, bank=bank, source_file_name=file.name, **row)
+        BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file.name, **row)
         created += 1
-
-    for receipt in Receipt.objects.filter(user=request.user, duplicate_of__isnull=True):
+    for receipt in visible_receipts(request.user).filter(duplicate_of__isnull=True):
         match_bank_transactions_for_receipt(receipt)
-
     return Response({'created': created})
 
 
@@ -50,12 +66,15 @@ def import_bank_statement(request):
 @permission_classes([permissions.IsAuthenticated])
 def summaries(request):
     period = request.query_params.get('period', 'month')
+    scope = request.query_params.get('scope', 'family')
     trunc = {'month': TruncMonth, 'quarter': TruncQuarter, 'halfyear': TruncQuarter, 'year': TruncYear}.get(period, TruncMonth)
-    qs = Receipt.objects.filter(user=request.user, duplicate_of__isnull=True, purchased_at__isnull=False)
-    rows = qs.annotate(period=trunc('purchased_at')).values('period').annotate(spent=Sum('total_amount'), saved=Sum('items__discount_amount')).order_by('-period')
+    qs = visible_receipts(request.user).filter(duplicate_of__isnull=True, purchased_at__isnull=False)
+    if scope == 'user':
+        qs = qs.filter(user=request.user)
+    rows = qs.annotate(period=trunc('purchased_at')).values('period', 'user_id').annotate(spent=Sum('total_amount'), saved=Sum('items__discount_amount')).order_by('-period')
     result = []
     for row in rows:
-        item = {'period': row['period'], 'spent': row['spent'] or 0, 'saved': row['saved'] or 0}
+        item = {'period': row['period'], 'user_id': row['user_id'], 'spent': row['spent'] or 0, 'saved': row['saved'] or 0}
         if period == 'halfyear' and row['period']:
             item['halfyear'] = 1 if row['period'].month <= 6 else 2
         result.append(item)
@@ -65,5 +84,5 @@ def summaries(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def match_candidates(request):
-    qs = MatchCandidate.objects.filter(receipt__user=request.user, status='needs_review').select_related('receipt', 'bank_transaction').order_by('-score')
+    qs = MatchCandidate.objects.filter(receipt__in=visible_receipts(request.user), status='needs_review').select_related('receipt', 'bank_transaction').order_by('-score')
     return Response(MatchCandidateSerializer(qs, many=True).data)
