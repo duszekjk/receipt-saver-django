@@ -1,12 +1,15 @@
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
-from rest_framework import permissions, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework import authentication, permissions, viewsets
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
+from .authentication import AppTokenAuthentication
 from .bank_parsers import parse_bank_csv
 from .models import BankTransaction, MatchCandidate, Receipt
 from .serializers import MatchCandidateSerializer, ReceiptSerializer
 from .services import create_receipt_from_image, match_bank_transactions_for_receipt
+
+API_AUTHENTICATION = [AppTokenAuthentication, authentication.SessionAuthentication, authentication.BasicAuthentication]
 
 
 def user_family(user):
@@ -26,12 +29,14 @@ def visible_receipts(user):
 class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ReceiptSerializer
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = API_AUTHENTICATION
 
     def get_queryset(self):
         return visible_receipts(self.request.user).prefetch_related('items').order_by('-purchased_at', '-id')
 
 
 @api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def me(request):
     profile = getattr(request.user, 'receipt_profile', None)
@@ -48,6 +53,7 @@ def me(request):
 
 
 @api_view(['POST'])
+@authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def scan_receipt(request):
     image = request.FILES.get('image')
@@ -62,6 +68,7 @@ def scan_receipt(request):
 
 
 @api_view(['POST'])
+@authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def import_bank_statement(request):
     file = request.FILES.get('file')
@@ -79,6 +86,7 @@ def import_bank_statement(request):
 
 
 @api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def summaries(request):
     period = request.query_params.get('period', 'month')
@@ -98,6 +106,7 @@ def summaries(request):
 
 
 @api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def match_candidates(request):
     qs = MatchCandidate.objects.filter(receipt__in=visible_receipts(request.user), status='needs_review').select_related('receipt', 'bank_transaction').order_by('-score')
