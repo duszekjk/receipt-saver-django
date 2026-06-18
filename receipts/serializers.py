@@ -1,5 +1,19 @@
 from rest_framework import serializers
-from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
+from .models import BankTransaction, Family, MatchCandidate, Receipt, ReceiptItem, ReceiptUserProfile
+
+
+class FamilySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Family
+        fields = '__all__'
+
+
+class ReceiptUserProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = ReceiptUserProfile
+        fields = '__all__'
 
 
 class ReceiptItemSerializer(serializers.ModelSerializer):
