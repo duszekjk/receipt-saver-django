@@ -2,6 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from .image_preprocessing import crop_receipt_best_effort
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
 from .openai_receipts import parse_receipt_image
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
@@ -9,7 +10,9 @@ from .utils import build_receipt_fingerprint, money_similarity, normalize_text, 
 
 def create_receipt_from_image(user, image_file) -> Receipt:
     receipt = Receipt.objects.create(user=user, image=image_file)
-    data = parse_receipt_image(receipt.image.path)
+    ocr_image_path = crop_receipt_best_effort(receipt.image.path)
+    data = parse_receipt_image(ocr_image_path)
+    data['_ocr_image_path'] = ocr_image_path
     purchased_at = parse_datetime(data.get('purchased_at') or '')
     if purchased_at and timezone.is_naive(purchased_at):
         purchased_at = timezone.make_aware(purchased_at, timezone.get_current_timezone())
