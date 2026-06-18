@@ -1,0 +1,15 @@
+# Django migrations are generated per host project/server
+migrations/
+*/migrations/
+!migrations/.gitkeep
+!*/migrations/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
