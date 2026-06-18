@@ -1,27 +1,43 @@
-# Receipt Saver Django
+# Receipt Saver Django App
 
-Backend Django/DRF dla aplikacji do skanowania paragonów, śledzenia oszczędności z promocji oraz luźnego merge z wyciągami ING/Santander.
+To repo zawiera **jedną aplikację Django** do wpięcia w istniejący projekt: `receipts`.
 
-## Zakres MVP
+Nie jest to samodzielny projekt Django. Nie ma tu `manage.py`, ustawień projektu, WSGI ani osobnej aplikacji do importu bankowego.
+
+## Co zawiera aplikacja
 
 - upload zdjęcia paragonu,
 - OCR + kategoryzacja produktów przez OpenAI Vision,
 - wykrywanie promocji i oszczędności,
-- wykrywanie duplikatów paragonów po treści, nie po zdjęciu,
+- wykrywanie duplikatów paragonów po treści,
 - import CSV z ING/Santander,
 - probabilistyczne dopasowanie transakcji bankowej do paragonu,
 - podsumowania: miesięczne, kwartalne, półroczne, roczne.
 
-## Start lokalny
+## Integracja z istniejącym projektem
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver
+1. Skopiuj katalog `receipts/` do głównego projektu Django.
+2. Dodaj aplikację do `INSTALLED_APPS`:
+
+```python
+INSTALLED_APPS += [
+    'receipts',
+]
 ```
 
-W istniejącym serwisie Django możesz skopiować aplikacje `receipts` i `bank_import`. Backend używa zmiennej `OPENAI_KEY`.
+3. Podepnij URL-e w głównym `urls.py` projektu:
+
+```python
+path('api/', include('receipts.urls')),
+```
+
+4. Projekt nadrzędny powinien dostarczać:
+
+```python
+OPENAI_KEY = '...'
+OPENAI_RECEIPT_MODEL = 'gpt-4o-mini'
+```
+
+5. Zależności z `requirements.txt` potraktuj jako fragment do scalenia z zależnościami głównego projektu.
+
+Migracje, baza danych, autoryzacja, media storage i deployment są zarządzane przez główny projekt.
