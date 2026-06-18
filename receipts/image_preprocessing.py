@@ -38,12 +38,13 @@ def _save_crop(path: Path, image: np.ndarray, suffix: str) -> str:
 
 
 def _crop_by_zero_shot_detector(image_path: str) -> str | None:
-    """Use an open-vocabulary detector to find the receipt/document bbox.
+    """Optional open-vocabulary detector.
 
-    This is preferred over contour detection. It is optional and only runs when
-    transformers/torch are installed from requirements-ml.txt.
+    Disabled by default because OWL-ViT/GroundingDINO-class models are too heavy
+    for a small CPU-only server. Enable only for experiments with:
+    RECEIPT_DETECTOR_ENABLED=1 and requirements-ml.txt installed.
     """
-    if os.getenv('RECEIPT_DETECTOR_ENABLED', '1') == '0':
+    if os.getenv('RECEIPT_DETECTOR_ENABLED', '0') != '1':
         return None
 
     global _DETECTOR
