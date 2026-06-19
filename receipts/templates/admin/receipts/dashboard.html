@@ -1,0 +1,132 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<style>
+.receipts-dashboard { max-width: 1200px; }
+.receipts-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 18px 0; }
+.receipts-card { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; }
+.receipts-card strong { display: block; font-size: 24px; margin-top: 8px; }
+.receipts-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.receipts-panel { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+.receipts-bar { height: 22px; background: #e5e5e5; border-radius: 6px; overflow: hidden; min-width: 120px; }
+.receipts-bar span { display: block; height: 100%; background: #417690; }
+.receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 18px; }
+.receipts-form select { min-width: 260px; }
+.receipts-table { width: 100%; }
+.receipts-table th, .receipts-table td { padding: 8px; border-bottom: 1px solid var(--border-color); }
+@media (max-width: 900px) { .receipts-grid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="receipts-dashboard">
+  <h1>Receipts dashboard</h1>
+
+  <form method="get" class="receipts-form">
+    <div>
+      <label for="family">Rodzina</label><br>
+      <select name="family" id="family">
+        {% for family in families %}
+          <option value="{{ family.id }}" {% if selected_family and selected_family.id == family.id %}selected{% endif %}>{{ family.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="button">Zmień filtr</button>
+  </form>
+
+  {% if selected_family %}
+    <p>Pokazuję dane dla rodziny: <strong>{{ selected_family.name }}</strong></p>
+  {% else %}
+    <p>Brak wybranej rodziny.</p>
+  {% endif %}
+
+  <div class="receipts-cards">
+    <div class="receipts-card">Wydano<strong>{{ spent }} zł</strong></div>
+    <div class="receipts-card">Oszczędzono<strong>{{ saved }} zł</strong></div>
+    <div class="receipts-card">Paragony<strong>{{ receipt_count }}</strong></div>
+    <div class="receipts-card">Produkty<strong>{{ item_count }}</strong></div>
+    <div class="receipts-card">Niedopasowane transakcje<strong>{{ unmatched_count }}</strong></div>
+    <div class="receipts-card">Dopasowania do decyzji<strong>{{ pending_match_count }}</strong></div>
+  </div>
+
+  <div class="receipts-grid">
+    <div class="receipts-panel">
+      <h2>Miesięczne wydatki</h2>
+      <table class="receipts-table">
+        <thead><tr><th>Miesiąc</th><th>Wykres</th><th>Wydano</th><th>Oszczędzono</th><th>Paragony</th></tr></thead>
+        <tbody>
+        {% for row in monthly_rows %}
+          <tr>
+            <td>{{ row.month|date:"Y-m" }}</td>
+            <td><div class="receipts-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
+            <td>{{ row.spent }}</td>
+            <td>{{ row.saved }}</td>
+            <td>{{ row.count }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">Brak danych.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="receipts-panel">
+      <h2>Kategorie</h2>
+      <table class="receipts-table">
+        <thead><tr><th>Kategoria</th><th>Wykres</th><th>Wydano</th><th>Oszczędzono</th><th>Produkty</th></tr></thead>
+        <tbody>
+        {% for row in category_rows %}
+          <tr>
+            <td>{{ row.category }}</td>
+            <td><div class="receipts-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
+            <td>{{ row.spent }}</td>
+            <td>{{ row.saved }}</td>
+            <td>{{ row.count }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">Brak danych.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="receipts-grid">
+    <div class="receipts-panel">
+      <h2>Ostatnie paragony</h2>
+      <table class="receipts-table">
+        <thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead>
+        <tbody>
+        {% for receipt in recent_receipts %}
+          <tr>
+            <td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td>
+            <td><a href="../receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td>
+            <td>{{ receipt.user }}</td>
+            <td>{{ receipt.total_amount }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4">Brak paragonów.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="receipts-panel">
+      <h2>Dopasowania do sprawdzenia</h2>
+      <table class="receipts-table">
+        <thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead>
+        <tbody>
+        {% for match in pending_matches %}
+          <tr>
+            <td>{{ match.score|floatformat:2 }}</td>
+            <td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td>
+            <td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3">Brak dopasowań do sprawdzenia.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
