@@ -37,14 +37,23 @@ class AppLoginToken(models.Model):
     profile = models.ForeignKey(ReceiptUserProfile, related_name='app_tokens', on_delete=models.CASCADE)
     device_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=160, blank=True)
-    secret_key = models.CharField(max_length=128, editable=False)
+    secret_key = models.CharField(max_length=128, blank=True, editable=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
 
+    @staticmethod
+    def generate_secret():
+        return secrets.token_urlsafe(64)
+
     @classmethod
     def create_for_profile(cls, profile, name=''):
-        return cls.objects.create(profile=profile, name=name, secret_key=secrets.token_urlsafe(64))
+        return cls.objects.create(profile=profile, name=name, secret_key=cls.generate_secret())
+
+    def save(self, *args, **kwargs):
+        if not self.secret_key:
+            self.secret_key = self.generate_secret()
+        super().save(*args, **kwargs)
 
     def qr_payload(self):
         return {
