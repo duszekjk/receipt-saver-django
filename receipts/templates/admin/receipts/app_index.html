@@ -1,25 +1,27 @@
 {% extends "admin/app_index.html" %}
 {% load i18n %}
 
-{% block content %}
+{% block extrastyle %}{{ block.super }}
 <style>
-.receipts-app-dashboard { margin-bottom: 24px; }
-.receipts-dashboard-frame { width: 100%; min-height: 760px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--body-bg); }
-.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 18px; }
-.receipts-dashboard-actions a { display: inline-block; padding: 8px 12px; border-radius: 6px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
+#content { max-width: none !important; width: auto !important; }
+.receipts-app-dashboard { margin-bottom: 24px; padding: 22px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--body-bg); }
+.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 0; }
+.receipts-dashboard-actions a { display: inline-block; padding: 10px 14px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
+.receipts-dashboard-actions a.primary { font-weight: 700; padding: 12px 18px; }
 </style>
+{% endblock %}
 
+{% block content %}
 <div class="receipts-app-dashboard">
   <h1>Paragony — panel</h1>
-  <p>Podsumowanie wydatków, oszczędności, kategorii, ostatnich paragonów i dopasowań.</p>
+  <p>Dashboard jest teraz osobną szeroką stroną, bez zagnieżdżonego admina w ramce.</p>
   <div class="receipts-dashboard-actions">
-    <a href="{% url 'admin:receipts-dashboard' %}">Otwórz pełny dashboard</a>
+    <a class="primary" href="{% url 'admin:receipts-dashboard' %}">Otwórz dashboard</a>
     <a href="receipt/">Paragony</a>
     <a href="banktransaction/">Transakcje bankowe</a>
     <a href="matchcandidate/">Dopasowania</a>
     <a href="applogintoken/">Tokeny aplikacji</a>
   </div>
-  <iframe class="receipts-dashboard-frame" src="{% url 'admin:receipts-dashboard' %}" title="Receipts dashboard"></iframe>
 </div>
 
 {{ block.super }}
