@@ -1,0 +1,26 @@
+{% extends "admin/app_index.html" %}
+{% load i18n %}
+
+{% block content %}
+<style>
+.receipts-app-dashboard { margin-bottom: 24px; }
+.receipts-dashboard-frame { width: 100%; min-height: 760px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--body-bg); }
+.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 18px; }
+.receipts-dashboard-actions a { display: inline-block; padding: 8px 12px; border-radius: 6px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
+</style>
+
+<div class="receipts-app-dashboard">
+  <h1>Paragony — panel</h1>
+  <p>Podsumowanie wydatków, oszczędności, kategorii, ostatnich paragonów i dopasowań.</p>
+  <div class="receipts-dashboard-actions">
+    <a href="{% url 'admin:receipts-dashboard' %}">Otwórz pełny dashboard</a>
+    <a href="receipt/">Paragony</a>
+    <a href="banktransaction/">Transakcje bankowe</a>
+    <a href="matchcandidate/">Dopasowania</a>
+    <a href="applogintoken/">Tokeny aplikacji</a>
+  </div>
+  <iframe class="receipts-dashboard-frame" src="{% url 'admin:receipts-dashboard' %}" title="Receipts dashboard"></iframe>
+</div>
+
+{{ block.super }}
+{% endblock %}
