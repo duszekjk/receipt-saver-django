@@ -9,7 +9,8 @@
 .receipts-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
 .receipts-hero h1 { margin-bottom: 4px; }
 .receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
-.receipts-form select { min-width: 280px; min-height: 36px; }
+.receipts-form select, .receipts-form input { min-width: 120px; min-height: 36px; }
+.receipts-form select { min-width: 280px; }
 .receipts-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
 .receipts-card { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 .receipts-card .label { color: var(--body-quiet-color); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
@@ -26,6 +27,10 @@
 .visual-bar span { display: block; height: 100%; background: linear-gradient(90deg, #417690, #79aec8); border-radius: 999px; min-width: 3px; }
 .visual-bar.saved span { background: linear-gradient(90deg, #2e7d32, #8bc34a); }
 .visual-bar.danger span { background: linear-gradient(90deg, #c62828, #ef5350); }
+.chart-row { display: grid; grid-template-columns: minmax(130px, 210px) minmax(220px, 1fr) 120px 90px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
+.chart-row:last-child { border-bottom: 0; }
+.chart-label { font-weight: 700; overflow-wrap: anywhere; }
+.chart-value { text-align: right; white-space: nowrap; }
 .big-meter { margin-top: 10px; }
 .big-meter .visual-bar { height: 18px; }
 .receipts-table { width: 100%; border-collapse: collapse; }
@@ -38,7 +43,7 @@
 .problem-item.ok { background: rgba(46,125,50,.08); border-color: rgba(46,125,50,.35); }
 .action-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 20px; }
 .action-row a { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
-@media (max-width: 1000px) { .receipts-grid, .receipts-two { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .receipts-grid, .receipts-two { grid-template-columns: 1fr; } .chart-row { grid-template-columns: 1fr; } .chart-value { text-align: left; } }
 </style>
 {% endblock %}
 
@@ -63,6 +68,10 @@
           {% endfor %}
         </select>
       </div>
+      <div>
+        <label for="subcategory_limit">Subkategorie</label><br>
+        <input type="number" id="subcategory_limit" name="subcategory_limit" min="3" max="50" value="{{ subcategory_limit }}">
+      </div>
       <button type="submit" class="button">Zmień filtr</button>
     </form>
   </div>
@@ -75,28 +84,45 @@
   </div>
 
   <div class="receipts-cards">
-    <div class="receipts-card ok">
-      <div class="label">Wydano</div><strong>{{ spent }} zł</strong>
+    <div class="receipts-card ok"><div class="label">Wydano</div><strong>{{ spent }} zł</strong></div>
+    <div class="receipts-card ok"><div class="label">Oszczędzono</div><strong>{{ saved }} zł</strong><div class="big-meter"><div class="visual-bar saved"><span style="width: {{ savings_rate }}%"></span></div></div><div class="hint">Oszczędności względem wydatków: {{ savings_rate }}%</div></div>
+    <div class="receipts-card"><div class="label">Paragony</div><strong>{{ receipt_count }}</strong><div class="hint">Produkty: {{ item_count }}</div></div>
+    <div class="receipts-card {% if unmatched_count %}danger{% else %}ok{% endif %}"><div class="label">Niedopasowane transakcje</div><strong>{{ unmatched_count }}</strong><div class="big-meter"><div class="visual-bar danger"><span style="width: {{ unmatched_rate }}%"></span></div></div><div class="hint">{{ unmatched_rate }}% transakcji wymaga uwagi.</div></div>
+    <div class="receipts-card {% if pending_match_count %}warning{% else %}ok{% endif %}"><div class="label">Dopasowania do decyzji</div><strong>{{ pending_match_count }}</strong></div>
+    <div class="receipts-card {% if duplicate_count %}warning{% else %}ok{% endif %}"><div class="label">Duplikaty</div><strong>{{ duplicate_count }}</strong></div>
+  </div>
+
+  <div class="receipts-two">
+    <div class="receipts-panel">
+      <h2>Główne kategorie</h2>
+      {% if category_rows %}
+        {% for row in category_rows %}
+          <div class="chart-row">
+            <div class="chart-label">{{ row.category }}</div>
+            <div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div>
+            <div class="chart-value">{{ row.spent }} zł</div>
+            <div class="chart-value">{{ row.count }} poz.</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="receipts-empty">Brak kategorii. Wykres pojawi się po przetworzeniu paragonów.</div>
+      {% endif %}
     </div>
-    <div class="receipts-card ok">
-      <div class="label">Oszczędzono</div><strong>{{ saved }} zł</strong>
-      <div class="big-meter"><div class="visual-bar saved"><span style="width: {{ savings_rate }}%"></span></div></div>
-      <div class="hint">Oszczędności względem wydatków: {{ savings_rate }}%</div>
-    </div>
-    <div class="receipts-card">
-      <div class="label">Paragony</div><strong>{{ receipt_count }}</strong>
-      <div class="hint">Produkty: {{ item_count }}</div>
-    </div>
-    <div class="receipts-card {% if unmatched_count %}danger{% else %}ok{% endif %}">
-      <div class="label">Niedopasowane transakcje</div><strong>{{ unmatched_count }}</strong>
-      <div class="big-meter"><div class="visual-bar danger"><span style="width: {{ unmatched_rate }}%"></span></div></div>
-      <div class="hint">{{ unmatched_rate }}% transakcji wymaga uwagi.</div>
-    </div>
-    <div class="receipts-card {% if pending_match_count %}warning{% else %}ok{% endif %}">
-      <div class="label">Dopasowania do decyzji</div><strong>{{ pending_match_count }}</strong>
-    </div>
-    <div class="receipts-card {% if duplicate_count %}warning{% else %}ok{% endif %}">
-      <div class="label">Duplikaty</div><strong>{{ duplicate_count }}</strong>
+
+    <div class="receipts-panel">
+      <h2>Subkategorie — top {{ subcategory_limit }} + pozostałe</h2>
+      {% if subcategory_rows %}
+        {% for row in subcategory_rows %}
+          <div class="chart-row">
+            <div class="chart-label">{{ row.subcategory }}</div>
+            <div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div>
+            <div class="chart-value">{{ row.spent }} zł</div>
+            <div class="chart-value">{{ row.count }} poz.</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="receipts-empty">Brak subkategorii. Wykres pojawi się po przetworzeniu paragonów.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -109,40 +135,12 @@
             <thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead>
             <tbody>
             {% for row in monthly_rows %}
-              <tr>
-                <td><strong>{{ row.month|date:"Y-m" }}</strong></td>
-                <td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
-                <td>{{ row.spent }} zł</td>
-                <td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td>
-                <td>{{ row.count }}</td>
-              </tr>
+              <tr><td><strong>{{ row.month|date:"Y-m" }}</strong></td><td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td><td>{{ row.spent }} zł</td><td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td><td>{{ row.count }}</td></tr>
             {% endfor %}
             </tbody>
           </table>
         {% else %}
           <div class="receipts-empty">Brak paragonów z datą. Po dodaniu pierwszych paragonów tutaj pojawi się wykres miesięczny.</div>
-        {% endif %}
-      </div>
-
-      <div class="receipts-panel">
-        <h2>Kategorie wydatków</h2>
-        {% if category_rows %}
-          <table class="receipts-table">
-            <thead><tr><th>Kategoria</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Produkty</th></tr></thead>
-            <tbody>
-            {% for row in category_rows %}
-              <tr>
-                <td><strong>{{ row.category }}</strong></td>
-                <td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
-                <td>{{ row.spent }} zł</td>
-                <td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td>
-                <td>{{ row.count }}</td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        {% else %}
-          <div class="receipts-empty">Brak produktów. Kategorie pojawią się po przetworzeniu paragonów.</div>
         {% endif %}
       </div>
     </div>
@@ -152,10 +150,7 @@
         <h2>Problemy do rozwiązania</h2>
         <div class="problem-list">
           {% for problem in problem_cards %}
-            <div class="problem-item {{ problem.level }}">
-              <strong>{{ problem.label }}: {{ problem.value }}</strong><br>
-              <span>{{ problem.hint }}</span>
-            </div>
+            <div class="problem-item {{ problem.level }}"><strong>{{ problem.label }}: {{ problem.value }}</strong><br><span>{{ problem.hint }}</span></div>
           {% endfor %}
         </div>
       </div>
@@ -163,18 +158,11 @@
       <div class="receipts-panel">
         <h2>Dopasowania do sprawdzenia</h2>
         {% if pending_matches %}
-          <table class="receipts-table">
-            <thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead>
-            <tbody>
+          <table class="receipts-table"><thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead><tbody>
             {% for match in pending_matches %}
-              <tr>
-                <td><strong>{{ match.score|floatformat:2 }}</strong></td>
-                <td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td>
-                <td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td>
-              </tr>
+              <tr><td><strong>{{ match.score|floatformat:2 }}</strong></td><td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td><td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td></tr>
             {% endfor %}
-            </tbody>
-          </table>
+          </tbody></table>
         {% else %}
           <div class="receipts-empty">Brak dopasowań wymagających decyzji.</div>
         {% endif %}
@@ -185,19 +173,11 @@
   <div class="receipts-panel">
     <h2>Ostatnie paragony</h2>
     {% if recent_receipts %}
-      <table class="receipts-table">
-        <thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead>
-        <tbody>
+      <table class="receipts-table"><thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead><tbody>
         {% for receipt in recent_receipts %}
-          <tr>
-            <td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td>
-            <td><a href="../receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td>
-            <td>{{ receipt.user }}</td>
-            <td>{{ receipt.total_amount }}</td>
-          </tr>
+          <tr><td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td><td><a href="../receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td><td>{{ receipt.user }}</td><td>{{ receipt.total_amount }}</td></tr>
         {% endfor %}
-        </tbody>
-      </table>
+      </tbody></table>
     {% else %}
       <div class="receipts-empty">Nie ma jeszcze paragonów.</div>
     {% endif %}
