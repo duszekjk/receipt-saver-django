@@ -78,6 +78,7 @@
 
   <div class="action-row">
     <a href="../receipts/receipt/">Paragony</a>
+    <a href="{% url 'admin:receipts-import-bank-statement' %}">Import wyciągu bankowego</a>
     <a href="../receipts/banktransaction/">Transakcje bankowe</a>
     <a href="../receipts/matchcandidate/">Dopasowania</a>
     <a href="../receipts/applogintoken/">Tokeny aplikacji</a>
@@ -93,94 +94,15 @@
   </div>
 
   <div class="receipts-two">
-    <div class="receipts-panel">
-      <h2>Główne kategorie</h2>
-      {% if category_rows %}
-        {% for row in category_rows %}
-          <div class="chart-row">
-            <div class="chart-label">{{ row.category }}</div>
-            <div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div>
-            <div class="chart-value">{{ row.spent }} zł</div>
-            <div class="chart-value">{{ row.count }} poz.</div>
-          </div>
-        {% endfor %}
-      {% else %}
-        <div class="receipts-empty">Brak kategorii. Wykres pojawi się po przetworzeniu paragonów.</div>
-      {% endif %}
-    </div>
-
-    <div class="receipts-panel">
-      <h2>Subkategorie — top {{ subcategory_limit }} + pozostałe</h2>
-      {% if subcategory_rows %}
-        {% for row in subcategory_rows %}
-          <div class="chart-row">
-            <div class="chart-label">{{ row.subcategory }}</div>
-            <div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div>
-            <div class="chart-value">{{ row.spent }} zł</div>
-            <div class="chart-value">{{ row.count }} poz.</div>
-          </div>
-        {% endfor %}
-      {% else %}
-        <div class="receipts-empty">Brak subkategorii. Wykres pojawi się po przetworzeniu paragonów.</div>
-      {% endif %}
-    </div>
+    <div class="receipts-panel"><h2>Główne kategorie</h2>{% if category_rows %}{% for row in category_rows %}<div class="chart-row"><div class="chart-label">{{ row.category }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak kategorii. Wykres pojawi się po przetworzeniu paragonów.</div>{% endif %}</div>
+    <div class="receipts-panel"><h2>Subkategorie — top {{ subcategory_limit }} + pozostałe</h2>{% if subcategory_rows %}{% for row in subcategory_rows %}<div class="chart-row"><div class="chart-label">{{ row.subcategory }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak subkategorii. Wykres pojawi się po przetworzeniu paragonów.</div>{% endif %}</div>
   </div>
 
   <div class="receipts-grid">
-    <div>
-      <div class="receipts-panel">
-        <h2>Miesięczne wydatki</h2>
-        {% if monthly_rows %}
-          <table class="receipts-table">
-            <thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead>
-            <tbody>
-            {% for row in monthly_rows %}
-              <tr><td><strong>{{ row.month|date:"Y-m" }}</strong></td><td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td><td>{{ row.spent }} zł</td><td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td><td>{{ row.count }}</td></tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        {% else %}
-          <div class="receipts-empty">Brak paragonów z datą. Po dodaniu pierwszych paragonów tutaj pojawi się wykres miesięczny.</div>
-        {% endif %}
-      </div>
-    </div>
-
-    <div>
-      <div class="receipts-panel">
-        <h2>Problemy do rozwiązania</h2>
-        <div class="problem-list">
-          {% for problem in problem_cards %}
-            <div class="problem-item {{ problem.level }}"><strong>{{ problem.label }}: {{ problem.value }}</strong><br><span>{{ problem.hint }}</span></div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="receipts-panel">
-        <h2>Dopasowania do sprawdzenia</h2>
-        {% if pending_matches %}
-          <table class="receipts-table"><thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead><tbody>
-            {% for match in pending_matches %}
-              <tr><td><strong>{{ match.score|floatformat:2 }}</strong></td><td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td><td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td></tr>
-            {% endfor %}
-          </tbody></table>
-        {% else %}
-          <div class="receipts-empty">Brak dopasowań wymagających decyzji.</div>
-        {% endif %}
-      </div>
-    </div>
+    <div><div class="receipts-panel"><h2>Miesięczne wydatki</h2>{% if monthly_rows %}<table class="receipts-table"><thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead><tbody>{% for row in monthly_rows %}<tr><td><strong>{{ row.month|date:"Y-m" }}</strong></td><td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td><td>{{ row.spent }} zł</td><td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak paragonów z datą. Po dodaniu pierwszych paragonów tutaj pojawi się wykres miesięczny.</div>{% endif %}</div></div>
+    <div><div class="receipts-panel"><h2>Problemy do rozwiązania</h2><div class="problem-list">{% for problem in problem_cards %}<div class="problem-item {{ problem.level }}"><strong>{{ problem.label }}: {{ problem.value }}</strong><br><span>{{ problem.hint }}</span></div>{% endfor %}</div></div><div class="receipts-panel"><h2>Dopasowania do sprawdzenia</h2>{% if pending_matches %}<table class="receipts-table"><thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead><tbody>{% for match in pending_matches %}<tr><td><strong>{{ match.score|floatformat:2 }}</strong></td><td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td><td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak dopasowań wymagających decyzji.</div>{% endif %}</div></div>
   </div>
 
-  <div class="receipts-panel">
-    <h2>Ostatnie paragony</h2>
-    {% if recent_receipts %}
-      <table class="receipts-table"><thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead><tbody>
-        {% for receipt in recent_receipts %}
-          <tr><td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td><td><a href="../receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td><td>{{ receipt.user }}</td><td>{{ receipt.total_amount }}</td></tr>
-        {% endfor %}
-      </tbody></table>
-    {% else %}
-      <div class="receipts-empty">Nie ma jeszcze paragonów.</div>
-    {% endif %}
-  </div>
+  <div class="receipts-panel"><h2>Ostatnie paragony</h2>{% if recent_receipts %}<table class="receipts-table"><thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead><tbody>{% for receipt in recent_receipts %}<tr><td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td><td><a href="../receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td><td>{{ receipt.user }}</td><td>{{ receipt.total_amount }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Nie ma jeszcze paragonów.</div>{% endif %}</div>
 </div>
 {% endblock %}
