@@ -49,11 +49,36 @@ def percent(part, whole):
     return int((Decimal(part) / Decimal(whole)) * 100)
 
 
+def prepare_bar_rows(rows, label_key, limit=None, add_other=False):
+    rows = list(rows)
+    for row in rows:
+        row[label_key] = row[label_key] or 'inne'
+        row['spent'] = money(row['spent'])
+        row['saved'] = money(row.get('saved'))
+
+    if limit and add_other and len(rows) > limit:
+        visible = rows[:limit]
+        hidden = rows[limit:]
+        other_spent = sum((row['spent'] for row in hidden), Decimal('0.00'))
+        other_saved = sum((row['saved'] for row in hidden), Decimal('0.00'))
+        other_count = sum((row.get('count') or 0 for row in hidden), 0)
+        visible.append({label_key: 'pozostale', 'spent': other_spent, 'saved': other_saved, 'count': other_count})
+        rows = visible
+
+    max_spent = max([row['spent'] for row in rows] + [Decimal('1.00')])
+    for row in rows:
+        row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
+        row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
+    return rows
+
+
 def receipts_dashboard(request):
     family = selected_family(request)
     families = visible_families(request.user)
     receipts = family_receipts_queryset(request)
     receipt_ids = receipts.values_list('id', flat=True)
+    subcategory_limit = int(request.GET.get('subcategory_limit') or 12)
+    subcategory_limit = max(3, min(50, subcategory_limit))
 
     spent = money(receipts.aggregate(total=Sum('total_amount'))['total'])
     saved = money(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).aggregate(total=Sum('discount_amount'))['total'])
@@ -99,39 +124,28 @@ def receipts_dashboard(request):
         row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
         row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
 
-    category_rows = list(
+    category_rows = prepare_bar_rows(
         ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
         .values('category')
         .annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id'))
-        .order_by('-spent')[:12]
+        .order_by('-spent'),
+        'category'
     )
-    max_category = max([row['spent'] or Decimal('0.00') for row in category_rows] + [Decimal('1.00')])
-    for row in category_rows:
-        row['category'] = row['category'] or 'inne'
-        row['spent'] = money(row['spent'])
-        row['saved'] = money(row['saved'])
-        row['bar_width'] = int((row['spent'] / max_category) * 100) if max_category else 0
-        row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
+
+    subcategory_rows = prepare_bar_rows(
+        ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
+        .values('subcategory')
+        .annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id'))
+        .order_by('-spent'),
+        'subcategory',
+        limit=subcategory_limit,
+        add_other=True,
+    )
 
     problem_cards = [
-        {
-            'label': 'Niedopasowane transakcje',
-            'value': unmatched_count,
-            'level': 'danger' if unmatched_count else 'ok',
-            'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.',
-        },
-        {
-            'label': 'Dopasowania do decyzji',
-            'value': pending_match_count,
-            'level': 'warning' if pending_match_count else 'ok',
-            'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.',
-        },
-        {
-            'label': 'Duplikaty paragonów',
-            'value': duplicate_count,
-            'level': 'warning' if duplicate_count else 'ok',
-            'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.',
-        },
+        {'label': 'Niedopasowane transakcje', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
+        {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
+        {'label': 'Duplikaty paragonów', 'value': duplicate_count, 'level': 'warning' if duplicate_count else 'ok', 'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.'},
     ]
 
     savings_rate = min(100, percent(saved, spent)) if spent else 0
@@ -142,6 +156,7 @@ def receipts_dashboard(request):
         'title': 'Receipts dashboard',
         'families': families,
         'selected_family': family,
+        'subcategory_limit': subcategory_limit,
         'spent': spent,
         'saved': saved,
         'savings_rate': savings_rate,
@@ -154,6 +169,7 @@ def receipts_dashboard(request):
         'problem_cards': problem_cards,
         'monthly_rows': monthly_rows,
         'category_rows': category_rows,
+        'subcategory_rows': subcategory_rows,
         'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:10],
         'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:10],
     }
