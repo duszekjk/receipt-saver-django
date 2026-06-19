@@ -43,6 +43,12 @@ def money(value):
     return value or Decimal('0.00')
 
 
+def percent(part, whole):
+    if not whole:
+        return 0
+    return int((Decimal(part) / Decimal(whole)) * 100)
+
+
 def receipts_dashboard(request):
     family = selected_family(request)
     families = visible_families(request.user)
@@ -53,11 +59,30 @@ def receipts_dashboard(request):
     saved = money(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).aggregate(total=Sum('discount_amount'))['total'])
     receipt_count = receipts.count()
     item_count = ReceiptItem.objects.filter(receipt_id__in=receipt_ids).count()
+    duplicate_count = Receipt.objects.filter(duplicate_of__isnull=False)
+    if family:
+        duplicate_count = duplicate_count.filter(family=family)
+    elif not request.user.is_superuser:
+        duplicate_count = duplicate_count.filter(user=request.user)
+    duplicate_count = duplicate_count.count()
+
     unmatched_transactions = BankTransaction.objects.filter(matched_receipt__isnull=True)
+    all_transactions = BankTransaction.objects.all()
     if family:
         unmatched_transactions = unmatched_transactions.filter(family=family)
+        all_transactions = all_transactions.filter(family=family)
     elif not request.user.is_superuser:
         unmatched_transactions = unmatched_transactions.none()
+        all_transactions = all_transactions.none()
+    unmatched_count = unmatched_transactions.count()
+    transaction_count = all_transactions.count()
+
+    pending_matches = MatchCandidate.objects.filter(status='needs_review')
+    if family:
+        pending_matches = pending_matches.filter(receipt__family=family)
+    elif not request.user.is_superuser:
+        pending_matches = pending_matches.none()
+    pending_match_count = pending_matches.count()
 
     monthly_rows = list(
         receipts.filter(purchased_at__isnull=False)
@@ -72,6 +97,7 @@ def receipts_dashboard(request):
         row['spent'] = money(row['spent'])
         row['saved'] = money(row['saved'])
         row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
+        row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
 
     category_rows = list(
         ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
@@ -85,13 +111,31 @@ def receipts_dashboard(request):
         row['spent'] = money(row['spent'])
         row['saved'] = money(row['saved'])
         row['bar_width'] = int((row['spent'] / max_category) * 100) if max_category else 0
+        row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
 
-    recent_receipts = receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:10]
-    pending_matches = MatchCandidate.objects.filter(status='needs_review')
-    if family:
-        pending_matches = pending_matches.filter(receipt__family=family)
-    elif not request.user.is_superuser:
-        pending_matches = pending_matches.none()
+    problem_cards = [
+        {
+            'label': 'Niedopasowane transakcje',
+            'value': unmatched_count,
+            'level': 'danger' if unmatched_count else 'ok',
+            'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.',
+        },
+        {
+            'label': 'Dopasowania do decyzji',
+            'value': pending_match_count,
+            'level': 'warning' if pending_match_count else 'ok',
+            'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.',
+        },
+        {
+            'label': 'Duplikaty paragonów',
+            'value': duplicate_count,
+            'level': 'warning' if duplicate_count else 'ok',
+            'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.',
+        },
+    ]
+
+    savings_rate = min(100, percent(saved, spent)) if spent else 0
+    unmatched_rate = min(100, percent(unmatched_count, transaction_count)) if transaction_count else 0
 
     context = {
         **admin.site.each_context(request),
@@ -100,13 +144,17 @@ def receipts_dashboard(request):
         'selected_family': family,
         'spent': spent,
         'saved': saved,
+        'savings_rate': savings_rate,
         'receipt_count': receipt_count,
         'item_count': item_count,
-        'unmatched_count': unmatched_transactions.count(),
-        'pending_match_count': pending_matches.count(),
+        'unmatched_count': unmatched_count,
+        'unmatched_rate': unmatched_rate,
+        'pending_match_count': pending_match_count,
+        'duplicate_count': duplicate_count,
+        'problem_cards': problem_cards,
         'monthly_rows': monthly_rows,
         'category_rows': category_rows,
-        'recent_receipts': recent_receipts,
+        'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:10],
         'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:10],
     }
     return render(request, 'admin/receipts/dashboard.html', context)
