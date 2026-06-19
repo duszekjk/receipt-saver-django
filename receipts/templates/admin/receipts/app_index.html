@@ -5,7 +5,8 @@
 <style>
 #content { max-width: none !important; width: auto !important; }
 .receipts-app-dashboard { margin-bottom: 24px; padding: 22px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--body-bg); }
-.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 0; }
+.receipts-app-dashboard h1 { margin-top: 0; }
+.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
 .receipts-dashboard-actions a { display: inline-block; padding: 10px 14px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
 .receipts-dashboard-actions a.primary { font-weight: 700; padding: 12px 18px; }
 </style>
@@ -13,10 +14,9 @@
 
 {% block content %}
 <div class="receipts-app-dashboard">
-  <h1>Paragony — panel</h1>
-  <p>Dashboard jest teraz osobną szeroką stroną, bez zagnieżdżonego admina w ramce.</p>
+  <h1>Paragony</h1>
   <div class="receipts-dashboard-actions">
-    <a class="primary" href="{% url 'admin:receipts-dashboard' %}">Otwórz dashboard</a>
+    <a class="primary" href="{% url 'admin:receipts-dashboard' %}">Dashboard</a>
     <a href="receipt/">Paragony</a>
     <a href="banktransaction/">Transakcje bankowe</a>
     <a href="matchcandidate/">Dopasowania</a>
