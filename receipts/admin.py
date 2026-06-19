@@ -39,20 +39,38 @@ class ReceiptUserProfileAdmin(admin.ModelAdmin):
     list_filter = ('family', 'role')
     search_fields = ('user__username', 'user__email', 'display_name')
     inlines = [AppLoginTokenInline]
+    actions = ['generate_app_login_token']
+
+    @admin.action(description='Generate app QR login token for selected profiles')
+    def generate_app_login_token(self, request, queryset):
+        created = 0
+        for profile in queryset:
+            AppLoginToken.create_for_profile(profile, name='iPhone')
+            created += 1
+        self.message_user(request, f'Created {created} app login token(s). Open App login tokens to scan QR.', messages.SUCCESS)
 
 
 @admin.register(AppLoginToken)
 class AppLoginTokenAdmin(admin.ModelAdmin):
-    list_display = ('id', 'profile', 'name', 'device_id', 'is_active', 'created_at', 'last_used_at')
+    list_display = ('id', 'profile', 'name', 'device_id', 'has_secret', 'is_active', 'created_at', 'last_used_at')
     list_filter = ('is_active', 'created_at')
     search_fields = ('profile__user__username', 'profile__display_name', 'device_id', 'name')
     readonly_fields = ('device_id', 'secret_preview', 'qr_code_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
     fields = ('profile', 'name', 'is_active', 'device_id', 'secret_preview', 'qr_code_preview', 'qr_payload_preview', 'created_at', 'last_used_at')
-    actions = ['create_new_token_for_selected_profiles']
+    actions = ['create_new_token_for_selected_profiles', 'fill_missing_secrets']
+
+    def save_model(self, request, obj, form, change):
+        if not obj.secret_key:
+            obj.secret_key = AppLoginToken.generate_secret()
+        super().save_model(request, obj, form, change)
+
+    def has_secret(self, obj):
+        return bool(obj.secret_key)
+    has_secret.boolean = True
 
     def secret_preview(self, obj):
         if not obj or not obj.secret_key:
-            return '-'
+            return 'Save this token first. A secret will be generated automatically.'
         return f'{obj.secret_key[:8]}...{obj.secret_key[-8:]}'
 
     def qr_payload_text(self, obj):
@@ -60,7 +78,7 @@ class AppLoginTokenAdmin(admin.ModelAdmin):
 
     def qr_code_preview(self, obj):
         if not obj or not obj.secret_key:
-            return '-'
+            return 'Save this token first. QR will appear after saving.'
         try:
             import qrcode
             image = qrcode.make(self.qr_payload_text(obj))
@@ -73,7 +91,7 @@ class AppLoginTokenAdmin(admin.ModelAdmin):
 
     def qr_payload_preview(self, obj):
         if not obj or not obj.secret_key:
-            return '-'
+            return 'Save this token first. Payload will appear after saving.'
         return format_html('<pre style="white-space: pre-wrap">{}</pre>', json.dumps(obj.qr_payload(), indent=2))
 
     @admin.action(description='Generate replacement token for selected token profiles')
@@ -83,6 +101,16 @@ class AppLoginTokenAdmin(admin.ModelAdmin):
             AppLoginToken.create_for_profile(token.profile, name=f'{token.name} replacement'.strip())
             created += 1
         self.message_user(request, f'Created {created} replacement token(s). Open each new token to scan QR payload.', messages.SUCCESS)
+
+    @admin.action(description='Fill missing secrets for selected tokens')
+    def fill_missing_secrets(self, request, queryset):
+        updated = 0
+        for token in queryset:
+            if not token.secret_key:
+                token.secret_key = AppLoginToken.generate_secret()
+                token.save(update_fields=['secret_key'])
+                updated += 1
+        self.message_user(request, f'Filled {updated} missing secret(s).', messages.SUCCESS)
 
 
 @admin.register(Receipt)
