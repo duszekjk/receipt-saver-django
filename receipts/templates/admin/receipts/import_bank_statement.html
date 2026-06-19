@@ -1,0 +1,21 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Import wyciągu bankowego</h1>
+  {% if selected_family %}
+    <p>Transakcje zostaną przypisane do rodziny: <strong>{{ selected_family.name }}</strong>.</p>
+  {% endif %}
+  <form method="post" enctype="multipart/form-data" novalidate>
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      {{ form.as_p }}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Importuj wyciąg" class="default">
+      <a class="button" href="{% url 'admin:receipts_banktransaction_changelist' %}">Anuluj</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
