@@ -1,98 +1,190 @@
 {% extends "admin/base_site.html" %}
 {% load i18n %}
 
-{% block content %}
+{% block extrastyle %}{{ block.super }}
 <style>
-.receipts-dashboard { max-width: 1200px; }
-.receipts-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 18px 0; }
-.receipts-card { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; }
-.receipts-card strong { display: block; font-size: 24px; margin-top: 8px; }
-.receipts-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-.receipts-panel { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-.receipts-bar { height: 22px; background: #e5e5e5; border-radius: 6px; overflow: hidden; min-width: 120px; }
-.receipts-bar span { display: block; height: 100%; background: #417690; }
-.receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 18px; }
-.receipts-form select { min-width: 260px; }
-.receipts-table { width: 100%; }
-.receipts-table th, .receipts-table td { padding: 8px; border-bottom: 1px solid var(--border-color); }
-@media (max-width: 900px) { .receipts-grid { grid-template-columns: 1fr; } }
+#content { max-width: none !important; width: auto !important; }
+.dashboard #content, .change-list #content { max-width: none !important; }
+.receipts-dashboard { width: 100%; box-sizing: border-box; }
+.receipts-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
+.receipts-hero h1 { margin-bottom: 4px; }
+.receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.receipts-form select { min-width: 280px; min-height: 36px; }
+.receipts-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
+.receipts-card { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.receipts-card .label { color: var(--body-quiet-color); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.receipts-card strong { display: block; font-size: 30px; margin-top: 8px; line-height: 1.1; }
+.receipts-card.ok { border-left: 7px solid #2e7d32; }
+.receipts-card.warning { border-left: 7px solid #f59e0b; }
+.receipts-card.danger { border-left: 7px solid #c62828; }
+.receipts-card .hint { color: var(--body-quiet-color); margin-top: 8px; }
+.receipts-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 20px; align-items: start; }
+.receipts-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.receipts-panel { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.receipts-panel h2 { margin-top: 0; }
+.visual-bar { height: 32px; background: #e8edf2; border-radius: 999px; overflow: hidden; position: relative; min-width: 180px; }
+.visual-bar span { display: block; height: 100%; background: linear-gradient(90deg, #417690, #79aec8); border-radius: 999px; min-width: 3px; }
+.visual-bar.saved span { background: linear-gradient(90deg, #2e7d32, #8bc34a); }
+.visual-bar.danger span { background: linear-gradient(90deg, #c62828, #ef5350); }
+.big-meter { margin-top: 10px; }
+.big-meter .visual-bar { height: 18px; }
+.receipts-table { width: 100%; border-collapse: collapse; }
+.receipts-table th, .receipts-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+.receipts-empty { padding: 30px; border: 2px dashed var(--border-color); border-radius: 14px; text-align: center; color: var(--body-quiet-color); background: rgba(127,127,127,.04); }
+.problem-list { display: grid; gap: 12px; }
+.problem-item { padding: 14px; border-radius: 12px; border: 1px solid var(--border-color); }
+.problem-item.danger { background: rgba(198,40,40,.08); border-color: rgba(198,40,40,.35); }
+.problem-item.warning { background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.45); }
+.problem-item.ok { background: rgba(46,125,50,.08); border-color: rgba(46,125,50,.35); }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 20px; }
+.action-row a { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
+@media (max-width: 1000px) { .receipts-grid, .receipts-two { grid-template-columns: 1fr; } }
 </style>
+{% endblock %}
 
+{% block content %}
 <div class="receipts-dashboard">
-  <h1>Receipts dashboard</h1>
-
-  <form method="get" class="receipts-form">
+  <div class="receipts-hero">
     <div>
-      <label for="family">Rodzina</label><br>
-      <select name="family" id="family">
-        {% for family in families %}
-          <option value="{{ family.id }}" {% if selected_family and selected_family.id == family.id %}selected{% endif %}>{{ family.name }}</option>
-        {% endfor %}
-      </select>
+      <h1>Paragony — dashboard</h1>
+      {% if selected_family %}
+        <p>Pokazuję dane dla rodziny: <strong>{{ selected_family.name }}</strong></p>
+      {% else %}
+        <p>Brak wybranej rodziny.</p>
+      {% endif %}
     </div>
-    <button type="submit" class="button">Zmień filtr</button>
-  </form>
 
-  {% if selected_family %}
-    <p>Pokazuję dane dla rodziny: <strong>{{ selected_family.name }}</strong></p>
-  {% else %}
-    <p>Brak wybranej rodziny.</p>
-  {% endif %}
+    <form method="get" class="receipts-form">
+      <div>
+        <label for="family">Rodzina</label><br>
+        <select name="family" id="family">
+          {% for family in families %}
+            <option value="{{ family.id }}" {% if selected_family and selected_family.id == family.id %}selected{% endif %}>{{ family.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="button">Zmień filtr</button>
+    </form>
+  </div>
+
+  <div class="action-row">
+    <a href="../receipts/receipt/">Paragony</a>
+    <a href="../receipts/banktransaction/">Transakcje bankowe</a>
+    <a href="../receipts/matchcandidate/">Dopasowania</a>
+    <a href="../receipts/applogintoken/">Tokeny aplikacji</a>
+  </div>
 
   <div class="receipts-cards">
-    <div class="receipts-card">Wydano<strong>{{ spent }} zł</strong></div>
-    <div class="receipts-card">Oszczędzono<strong>{{ saved }} zł</strong></div>
-    <div class="receipts-card">Paragony<strong>{{ receipt_count }}</strong></div>
-    <div class="receipts-card">Produkty<strong>{{ item_count }}</strong></div>
-    <div class="receipts-card">Niedopasowane transakcje<strong>{{ unmatched_count }}</strong></div>
-    <div class="receipts-card">Dopasowania do decyzji<strong>{{ pending_match_count }}</strong></div>
-  </div>
-
-  <div class="receipts-grid">
-    <div class="receipts-panel">
-      <h2>Miesięczne wydatki</h2>
-      <table class="receipts-table">
-        <thead><tr><th>Miesiąc</th><th>Wykres</th><th>Wydano</th><th>Oszczędzono</th><th>Paragony</th></tr></thead>
-        <tbody>
-        {% for row in monthly_rows %}
-          <tr>
-            <td>{{ row.month|date:"Y-m" }}</td>
-            <td><div class="receipts-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
-            <td>{{ row.spent }}</td>
-            <td>{{ row.saved }}</td>
-            <td>{{ row.count }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="5">Brak danych.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
+    <div class="receipts-card ok">
+      <div class="label">Wydano</div><strong>{{ spent }} zł</strong>
     </div>
-
-    <div class="receipts-panel">
-      <h2>Kategorie</h2>
-      <table class="receipts-table">
-        <thead><tr><th>Kategoria</th><th>Wykres</th><th>Wydano</th><th>Oszczędzono</th><th>Produkty</th></tr></thead>
-        <tbody>
-        {% for row in category_rows %}
-          <tr>
-            <td>{{ row.category }}</td>
-            <td><div class="receipts-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
-            <td>{{ row.spent }}</td>
-            <td>{{ row.saved }}</td>
-            <td>{{ row.count }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="5">Brak danych.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
+    <div class="receipts-card ok">
+      <div class="label">Oszczędzono</div><strong>{{ saved }} zł</strong>
+      <div class="big-meter"><div class="visual-bar saved"><span style="width: {{ savings_rate }}%"></span></div></div>
+      <div class="hint">Oszczędności względem wydatków: {{ savings_rate }}%</div>
+    </div>
+    <div class="receipts-card">
+      <div class="label">Paragony</div><strong>{{ receipt_count }}</strong>
+      <div class="hint">Produkty: {{ item_count }}</div>
+    </div>
+    <div class="receipts-card {% if unmatched_count %}danger{% else %}ok{% endif %}">
+      <div class="label">Niedopasowane transakcje</div><strong>{{ unmatched_count }}</strong>
+      <div class="big-meter"><div class="visual-bar danger"><span style="width: {{ unmatched_rate }}%"></span></div></div>
+      <div class="hint">{{ unmatched_rate }}% transakcji wymaga uwagi.</div>
+    </div>
+    <div class="receipts-card {% if pending_match_count %}warning{% else %}ok{% endif %}">
+      <div class="label">Dopasowania do decyzji</div><strong>{{ pending_match_count }}</strong>
+    </div>
+    <div class="receipts-card {% if duplicate_count %}warning{% else %}ok{% endif %}">
+      <div class="label">Duplikaty</div><strong>{{ duplicate_count }}</strong>
     </div>
   </div>
 
   <div class="receipts-grid">
-    <div class="receipts-panel">
-      <h2>Ostatnie paragony</h2>
+    <div>
+      <div class="receipts-panel">
+        <h2>Miesięczne wydatki</h2>
+        {% if monthly_rows %}
+          <table class="receipts-table">
+            <thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead>
+            <tbody>
+            {% for row in monthly_rows %}
+              <tr>
+                <td><strong>{{ row.month|date:"Y-m" }}</strong></td>
+                <td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
+                <td>{{ row.spent }} zł</td>
+                <td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="receipts-empty">Brak paragonów z datą. Po dodaniu pierwszych paragonów tutaj pojawi się wykres miesięczny.</div>
+        {% endif %}
+      </div>
+
+      <div class="receipts-panel">
+        <h2>Kategorie wydatków</h2>
+        {% if category_rows %}
+          <table class="receipts-table">
+            <thead><tr><th>Kategoria</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Produkty</th></tr></thead>
+            <tbody>
+            {% for row in category_rows %}
+              <tr>
+                <td><strong>{{ row.category }}</strong></td>
+                <td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td>
+                <td>{{ row.spent }} zł</td>
+                <td><div class="visual-bar saved"><span style="width: {{ row.saved_width }}%"></span></div>{{ row.saved }} zł</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="receipts-empty">Brak produktów. Kategorie pojawią się po przetworzeniu paragonów.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div>
+      <div class="receipts-panel">
+        <h2>Problemy do rozwiązania</h2>
+        <div class="problem-list">
+          {% for problem in problem_cards %}
+            <div class="problem-item {{ problem.level }}">
+              <strong>{{ problem.label }}: {{ problem.value }}</strong><br>
+              <span>{{ problem.hint }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="receipts-panel">
+        <h2>Dopasowania do sprawdzenia</h2>
+        {% if pending_matches %}
+          <table class="receipts-table">
+            <thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead>
+            <tbody>
+            {% for match in pending_matches %}
+              <tr>
+                <td><strong>{{ match.score|floatformat:2 }}</strong></td>
+                <td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td>
+                <td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="receipts-empty">Brak dopasowań wymagających decyzji.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="receipts-panel">
+    <h2>Ostatnie paragony</h2>
+    {% if recent_receipts %}
       <table class="receipts-table">
         <thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead>
         <tbody>
@@ -103,30 +195,12 @@
             <td>{{ receipt.user }}</td>
             <td>{{ receipt.total_amount }}</td>
           </tr>
-        {% empty %}
-          <tr><td colspan="4">Brak paragonów.</td></tr>
         {% endfor %}
         </tbody>
       </table>
-    </div>
-
-    <div class="receipts-panel">
-      <h2>Dopasowania do sprawdzenia</h2>
-      <table class="receipts-table">
-        <thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead>
-        <tbody>
-        {% for match in pending_matches %}
-          <tr>
-            <td>{{ match.score|floatformat:2 }}</td>
-            <td><a href="../receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td>
-            <td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="3">Brak dopasowań do sprawdzenia.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% else %}
+      <div class="receipts-empty">Nie ma jeszcze paragonów.</div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
