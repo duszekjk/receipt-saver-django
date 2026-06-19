@@ -115,6 +115,7 @@ class ReceiptItem(models.Model):
     promotion_name = models.CharField(max_length=255, blank=True)
     is_discounted = models.BooleanField(default=False)
     category = models.CharField(max_length=100, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, blank=True, db_index=True)
 
 
 class BankTransaction(models.Model):
