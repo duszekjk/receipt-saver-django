@@ -5,6 +5,7 @@ from django.contrib import admin, messages
 from django.db.models import Sum
 from django.urls import reverse
 from django.utils.html import format_html
+from .admin_dashboard import install_receipts_admin_dashboard
 from .models import (
     AppLoginNonce,
     AppLoginToken,
@@ -58,8 +59,12 @@ class AppLoginTokenInline(admin.TabularInline):
 
 @admin.register(Family)
 class FamilyAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'member_count', 'receipt_count', 'family_spent', 'family_saved', 'created_at')
+    list_display = ('id', 'name', 'dashboard_link', 'member_count', 'receipt_count', 'family_spent', 'family_saved', 'created_at')
     search_fields = ('name',)
+
+    def dashboard_link(self, obj):
+        url = reverse('admin:receipts-dashboard') + f'?family={obj.id}'
+        return format_html('<a class="button" href="{}">Dashboard</a>', url)
 
     def member_count(self, obj):
         return obj.members.count()
@@ -228,3 +233,6 @@ class MatchCandidateAdmin(admin.ModelAdmin):
 class AppLoginNonceAdmin(admin.ModelAdmin):
     list_display = ('id', 'token', 'nonce', 'timestamp', 'created_at')
     search_fields = ('nonce', 'token__device_id')
+
+
+install_receipts_admin_dashboard()
