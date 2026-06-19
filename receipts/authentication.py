@@ -8,19 +8,6 @@ from .models import AppLoginNonce, AppLoginToken
 
 
 class AppTokenAuthentication(authentication.BaseAuthentication):
-    """
-    HMAC auth for the mobile app.
-
-    Required headers:
-    - X-Receipt-Device: AppLoginToken.device_id
-    - X-Receipt-Timestamp: ISO datetime from the device
-    - X-Receipt-Nonce: random unique value
-    - X-Receipt-Path: exact path + query signed by the app
-    - X-Receipt-Signature: hex hmac_sha256(secret, method + path + timestamp + nonce + body_sha256)
-
-    The raw QR secret is never sent again after first setup.
-    """
-
     max_clock_skew = timedelta(minutes=5)
 
     def authenticate(self, request):
@@ -32,9 +19,6 @@ class AppTokenAuthentication(authentication.BaseAuthentication):
 
         if not all([device_id, timestamp, nonce, signed_path, signature]):
             return None
-
-        if signed_path != request.get_full_path():
-            raise exceptions.AuthenticationFailed('Signed path does not match request path')
 
         try:
             token = AppLoginToken.objects.select_related('profile__user').get(device_id=device_id, is_active=True)
