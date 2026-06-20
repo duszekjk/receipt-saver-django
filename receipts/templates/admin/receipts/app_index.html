@@ -1,28 +1,6 @@
-{% extends "admin/app_index.html" %}
-{% load i18n %}
-
-{% block extrastyle %}{{ block.super }}
-<style>
-#content { max-width: none !important; width: auto !important; }
-.receipts-app-dashboard { margin-bottom: 24px; padding: 22px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--body-bg); }
-.receipts-app-dashboard h1 { margin-top: 0; }
-.receipts-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
-.receipts-dashboard-actions a { display: inline-block; padding: 10px 14px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
-.receipts-dashboard-actions a.primary { font-weight: 700; padding: 12px 18px; }
-</style>
-{% endblock %}
-
+{% extends "admin/base_site.html" %}
+{% block extrahead %}{{ block.super }}<meta http-equiv="refresh" content="0; url={% url 'admin:receipts-dashboard' %}">{% endblock %}
 {% block content %}
-<div class="receipts-app-dashboard">
-  <h1>Paragony</h1>
-  <div class="receipts-dashboard-actions">
-    <a class="primary" href="{% url 'admin:receipts-dashboard' %}">Dashboard</a>
-    <a href="receipt/">Paragony</a>
-    <a href="banktransaction/">Transakcje bankowe</a>
-    <a href="matchcandidate/">Dopasowania</a>
-    <a href="applogintoken/">Tokeny aplikacji</a>
-  </div>
-</div>
-
-{{ block.super }}
+<p>Przekierowanie do dashboardu paragonów...</p>
+<p><a href="{% url 'admin:receipts-dashboard' %}">Otwórz dashboard</a></p>
 {% endblock %}
