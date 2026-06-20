@@ -4,10 +4,7 @@ from django.db.models import Count, Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
-from .bank_parsers import parse_bank_statement
-from .forms import BankStatementImportForm
 from .models import BankTransaction, Family, MatchCandidate, Receipt, ReceiptItem
-from .services import match_bank_transactions_for_receipt
 
 
 def user_family(user):
@@ -58,16 +55,16 @@ def prepare_bar_rows(rows, label_key, limit=None, add_other=False):
         row[label_key] = row[label_key] or 'inne'
         row['spent'] = money(row['spent'])
         row['saved'] = money(row.get('saved'))
-
     if limit and add_other and len(rows) > limit:
         visible = rows[:limit]
         hidden = rows[limit:]
-        other_spent = sum((row['spent'] for row in hidden), Decimal('0.00'))
-        other_saved = sum((row['saved'] for row in hidden), Decimal('0.00'))
-        other_count = sum((row.get('count') or 0 for row in hidden), 0)
-        visible.append({label_key: 'pozostale', 'spent': other_spent, 'saved': other_saved, 'count': other_count})
+        visible.append({
+            label_key: 'pozostale',
+            'spent': sum((row['spent'] for row in hidden), Decimal('0.00')),
+            'saved': sum((row['saved'] for row in hidden), Decimal('0.00')),
+            'count': sum((row.get('count') or 0 for row in hidden), 0),
+        })
         rows = visible
-
     max_spent = max([row['spent'] for row in rows] + [Decimal('1.00')])
     for row in rows:
         row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
@@ -87,12 +84,13 @@ def receipts_dashboard(request):
     saved = money(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).aggregate(total=Sum('discount_amount'))['total'])
     receipt_count = receipts.count()
     item_count = ReceiptItem.objects.filter(receipt_id__in=receipt_ids).count()
-    duplicate_count = Receipt.objects.filter(duplicate_of__isnull=False)
+
+    duplicate_qs = Receipt.objects.filter(duplicate_of__isnull=False)
     if family:
-        duplicate_count = duplicate_count.filter(family=family)
+        duplicate_qs = duplicate_qs.filter(family=family)
     elif not request.user.is_superuser:
-        duplicate_count = duplicate_count.filter(user=request.user)
-    duplicate_count = duplicate_count.count()
+        duplicate_qs = duplicate_qs.filter(user=request.user)
+    duplicate_count = duplicate_qs.count()
 
     unmatched_transactions = BankTransaction.objects.filter(matched_receipt__isnull=True)
     all_transactions = BankTransaction.objects.all()
@@ -124,21 +122,29 @@ def receipts_dashboard(request):
     category_rows = prepare_bar_rows(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('category').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent'), 'category')
     subcategory_rows = prepare_bar_rows(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('subcategory').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent'), 'subcategory', limit=subcategory_limit, add_other=True)
 
-    problem_cards = [
-        {'label': 'Niedopasowane transakcje', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
-        {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
-        {'label': 'Duplikaty paragonów', 'value': duplicate_count, 'level': 'warning' if duplicate_count else 'ok', 'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.'},
-    ]
-
-    savings_rate = min(100, percent(saved, spent)) if spent else 0
-    unmatched_rate = min(100, percent(unmatched_count, transaction_count)) if transaction_count else 0
-
     context = {
-        **admin.site.each_context(request), 'title': 'Receipts dashboard', 'families': families, 'selected_family': family,
-        'subcategory_limit': subcategory_limit, 'spent': spent, 'saved': saved, 'savings_rate': savings_rate,
-        'receipt_count': receipt_count, 'item_count': item_count, 'unmatched_count': unmatched_count, 'unmatched_rate': unmatched_rate,
-        'pending_match_count': pending_match_count, 'duplicate_count': duplicate_count, 'problem_cards': problem_cards,
-        'monthly_rows': monthly_rows, 'category_rows': category_rows, 'subcategory_rows': subcategory_rows,
+        **admin.site.each_context(request),
+        'title': 'Receipts dashboard',
+        'families': families,
+        'selected_family': family,
+        'subcategory_limit': subcategory_limit,
+        'spent': spent,
+        'saved': saved,
+        'savings_rate': min(100, percent(saved, spent)) if spent else 0,
+        'receipt_count': receipt_count,
+        'item_count': item_count,
+        'unmatched_count': unmatched_count,
+        'unmatched_rate': min(100, percent(unmatched_count, transaction_count)) if transaction_count else 0,
+        'pending_match_count': pending_match_count,
+        'duplicate_count': duplicate_count,
+        'problem_cards': [
+            {'label': 'Niedopasowane transakcje', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
+            {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
+            {'label': 'Duplikaty paragonów', 'value': duplicate_count, 'level': 'warning' if duplicate_count else 'ok', 'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.'},
+        ],
+        'monthly_rows': monthly_rows,
+        'category_rows': category_rows,
+        'subcategory_rows': subcategory_rows,
         'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:10],
         'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:10],
     }
@@ -146,6 +152,10 @@ def receipts_dashboard(request):
 
 
 def import_bank_statement_admin(request):
+    from .bank_parsers import parse_bank_statement
+    from .forms import BankStatementImportForm
+    from .services import match_bank_transactions_for_receipt
+
     family = selected_family(request)
     if request.method == 'POST':
         form = BankStatementImportForm(request.POST, request.FILES)
