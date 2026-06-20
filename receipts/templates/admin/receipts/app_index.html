@@ -1,6 +1,6 @@
 {% extends "admin/base_site.html" %}
-{% block extrahead %}{{ block.super }}<meta http-equiv="refresh" content="0; url={% url 'admin:receipts-dashboard' %}">{% endblock %}
+{% block extrahead %}{{ block.super }}<meta http-equiv="refresh" content="0; url=/admin/receipts-dashboard/">{% endblock %}
 {% block content %}
 <p>Przekierowanie do dashboardu paragonów...</p>
-<p><a href="{% url 'admin:receipts-dashboard' %}">Otwórz dashboard</a></p>
+<p><a href="/admin/receipts-dashboard/">Otwórz dashboard</a></p>
 {% endblock %}
