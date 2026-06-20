@@ -6,10 +6,10 @@ router = DefaultRouter()
 router.register('receipts', ReceiptViewSet, basename='receipts')
 
 urlpatterns = [
-    path('', include(router.urls)),
     path('me/', me),
     path('receipts/scan/', scan_receipt),
     path('bank/statement/', import_bank_statement),
     path('summaries/', summaries),
     path('matches/review/', match_candidates),
+    path('', include(router.urls)),
 ]
