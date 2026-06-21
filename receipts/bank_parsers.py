@@ -1,13 +1,16 @@
 import csv
 import io
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import pandas as pd
 from .utils import normalize_text
 
 
+HEADER_MARKERS = ['data transakcji', 'data ksiegowania', 'kwota transakcji']
+
+
 def parse_date(value):
-    value = str(value or '').strip()
+    value = str(value or '').strip().strip('"')
     if not value or value.lower() in {'nan', 'nat'}:
         return None
     if hasattr(value, 'date'):
@@ -24,70 +27,142 @@ def parse_date(value):
 
 
 def parse_amount(value):
-    value = str(value or '0').replace('\xa0', '').replace(' ', '').replace(',', '.')
+    value = str(value or '0').strip().strip('"').replace('\xa0', '').replace(' ', '').replace(',', '.')
     value = ''.join(ch for ch in value if ch.isdigit() or ch in '.-')
-    return Decimal(value or '0')
+    try:
+        return Decimal(value or '0')
+    except InvalidOperation:
+        return Decimal('0')
+
+
+def decode_text(raw):
+    for encoding in ['utf-8-sig', 'cp1250', 'iso-8859-2', 'windows-1250', 'latin2']:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode('utf-8', errors='ignore')
+
+
+def find_header_line(lines):
+    for index, line in enumerate(lines):
+        normalized = normalize_text(line)
+        if all(marker in normalized for marker in HEADER_MARKERS):
+            return index
+        if 'data transakcji' in normalized and 'kwota' in normalized:
+            return index
+    return 0
+
+
+def make_unique_headers(headers):
+    result = []
+    seen = {}
+    for index, header in enumerate(headers):
+        clean = str(header or '').strip().strip('"') or f'kolumna_{index}'
+        if clean in seen:
+            seen[clean] += 1
+            clean = f'{clean}_{seen[clean]}'
+        else:
+            seen[clean] = 0
+        result.append(clean)
+    return result
+
+
+def rows_from_records(records):
+    rows = []
+    for record in records:
+        row = {str(k or '').strip(): '' if pd.isna(v) else v for k, v in record.items()}
+        if any(str(v).strip() for v in row.values()):
+            rows.append(row)
+    return rows
+
+
+def read_excel_rows(raw):
+    frame = pd.read_excel(io.BytesIO(raw), dtype=str, header=None).fillna('')
+    lines = [';'.join(str(value) for value in row) for row in frame.values.tolist()]
+    header_index = find_header_line(lines)
+    headers = make_unique_headers(frame.iloc[header_index].tolist())
+    data = frame.iloc[header_index + 1:].copy()
+    data.columns = headers
+    return rows_from_records(data.to_dict(orient='records'))
+
+
+def read_csv_rows(raw):
+    text = decode_text(raw)
+    lines = text.splitlines()
+    header_index = find_header_line(lines)
+    table_text = '\n'.join(lines[header_index:])
+    try:
+        dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';,\t')
+    except csv.Error:
+        dialect = csv.excel
+        dialect.delimiter = ';'
+    reader = csv.reader(io.StringIO(table_text), dialect=dialect)
+    try:
+        headers = make_unique_headers(next(reader))
+    except StopIteration:
+        return []
+    rows = []
+    for values in reader:
+        if not any(str(value).strip() for value in values):
+            continue
+        if len(values) < len(headers):
+            values = values + [''] * (len(headers) - len(values))
+        row = dict(zip(headers, values[:len(headers)]))
+        rows.append(row)
+    return rows
 
 
 def read_statement_rows(file_obj):
     name = getattr(file_obj, 'name', '').lower()
     raw = file_obj.read()
     if name.endswith(('.xls', '.xlsx')):
-        frame = pd.read_excel(io.BytesIO(raw), dtype=str)
-        return frame.fillna('').to_dict(orient='records')
-
-    for encoding in ['utf-8-sig', 'cp1250', 'iso-8859-2']:
-        try:
-            text = raw.decode(encoding)
-            break
-        except UnicodeDecodeError:
-            text = raw.decode('utf-8', errors='ignore')
-    try:
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=';,\t')
-    except csv.Error:
-        dialect = csv.excel
-        dialect.delimiter = ';'
-    return list(csv.DictReader(io.StringIO(text), dialect=dialect))
+        return read_excel_rows(raw)
+    return read_csv_rows(raw)
 
 
 def pick(row, *keys):
     lower = {normalize_text(k): v for k, v in row.items()}
     for key in keys:
-        value = lower.get(normalize_text(key))
-        if value not in (None, ''):
-            return value
+        normalized_key = normalize_text(key)
+        for column, value in lower.items():
+            if normalized_key == column or normalized_key in column:
+                if value not in (None, ''):
+                    return value
     return ''
 
 
 def parse_bank_statement(file_obj, bank: str):
     for row in read_statement_rows(file_obj):
-        if bank == 'ing':
-            booked = pick(row, 'Data księgowania', 'Data ksiegowania', 'Data transakcji')
-            tx_date = pick(row, 'Data transakcji', 'Data księgowania', 'Data ksiegowania')
-            desc = pick(row, 'Dane kontrahenta', 'Tytuł', 'Tytul', 'Opis transakcji', 'Opis')
-            amount = pick(row, 'Kwota transakcji', 'Kwota', 'Kwota w walucie rachunku')
-        elif bank == 'santander':
-            booked = pick(row, 'Data księgowania', 'Data ksiegowania', 'Data')
-            tx_date = pick(row, 'Data transakcji', 'Data operacji', 'Data')
-            desc = pick(row, 'Opis transakcji', 'Kontrahent', 'Tytuł', 'Tytul', 'Opis')
-            amount = pick(row, 'Kwota', 'Kwota transakcji', 'Obciążenia', 'Obciazenia')
-        else:
-            booked = pick(row, 'Data księgowania', 'Data ksiegowania', 'Data')
-            tx_date = pick(row, 'Data transakcji', 'Data')
-            desc = pick(row, 'Opis', 'Tytuł', 'Tytul', 'Opis transakcji')
-            amount = pick(row, 'Kwota', 'Kwota transakcji')
+        booked = pick(row, 'Data księgowania', 'Data ksiegowania')
+        tx_date = pick(row, 'Data transakcji', 'Data operacji', 'Data')
+        desc = ' '.join(
+            part.strip()
+            for part in [
+                str(pick(row, 'Dane kontrahenta', 'Kontrahent')).strip(),
+                str(pick(row, 'Tytuł', 'Tytul', 'Opis transakcji', 'Opis')).strip(),
+                str(pick(row, 'Szczegóły', 'Szczegoly')).strip(),
+            ]
+            if part
+        )
+        amount = pick(row, 'Kwota transakcji', 'Kwota', 'Obciążenia', 'Obciazenia', 'Uznania')
+        currency = pick(row, 'Waluta') or 'PLN'
 
         parsed_amount = parse_amount(amount)
-        if not booked and not tx_date and parsed_amount == 0 and not desc:
+        parsed_date = parse_date(tx_date) or parse_date(booked)
+        if not parsed_date and parsed_amount == 0 and not desc:
             continue
+        if not parsed_date or parsed_amount == 0:
+            continue
+
         yield {
-            'booked_at': parse_date(booked),
-            'transaction_at': parse_date(tx_date),
-            'merchant_name': str(desc)[:255],
+            'booked_at': parse_date(booked) or parsed_date,
+            'transaction_at': parsed_date,
+            'merchant_name': desc[:255] or 'Nieznany kontrahent',
             'merchant_normalized': normalize_text(desc),
-            'raw_description': str(desc),
+            'raw_description': desc,
             'amount': parsed_amount,
-            'currency': 'PLN',
+            'currency': str(currency or 'PLN')[:3],
             'raw_row': row,
         }
 
