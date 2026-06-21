@@ -3,92 +3,129 @@
 
 {% block extrastyle %}{{ block.super }}
 <style>
-#content { max-width: none !important; width: auto !important; }
-.receipts-dashboard { width: 100%; box-sizing: border-box; }
-.receipts-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
-.receipts-hero h1 { margin-bottom: 4px; }
-.receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
-.receipts-form select, .receipts-form input { min-width: 120px; min-height: 36px; }
-.receipts-form select { min-width: 280px; }
-.receipts-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
-.receipts-card { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-.receipts-card .label { color: var(--body-quiet-color); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
-.receipts-card strong { display: block; font-size: 30px; margin-top: 8px; line-height: 1.1; }
-.receipts-card.ok { border-left: 7px solid #2e7d32; }
-.receipts-card.warning { border-left: 7px solid #f59e0b; }
-.receipts-card.danger { border-left: 7px solid #c62828; }
-.receipts-card .hint { color: var(--body-quiet-color); margin-top: 8px; }
-.receipts-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 20px; align-items: start; }
-.receipts-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
-.receipts-panel { background: var(--body-bg); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-.receipts-panel h2 { margin-top: 0; }
-.visual-bar { height: 32px; background: #e8edf2; border-radius: 999px; overflow: hidden; position: relative; min-width: 180px; }
-.visual-bar span { display: block; height: 100%; background: linear-gradient(90deg, #417690, #79aec8); border-radius: 999px; min-width: 3px; }
-.visual-bar.saved span { background: linear-gradient(90deg, #2e7d32, #8bc34a); }
-.visual-bar.danger span { background: linear-gradient(90deg, #c62828, #ef5350); }
-.chart-row { display: grid; grid-template-columns: minmax(130px, 210px) minmax(220px, 1fr) 120px 90px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
+:root {
+  --rs-bg: #f7f2ee;
+  --rs-card: #fffaf7;
+  --rs-text: #262626;
+  --rs-muted: #6b625c;
+  --rs-border: rgba(80, 60, 45, .12);
+  --rs-primary: #2f6f7e;
+  --rs-primary-soft: rgba(47, 111, 126, .12);
+  --rs-green: #2f8f5b;
+  --rs-orange: #c7791f;
+  --rs-red: #b94a48;
+  --rs-shadow: 0 12px 30px rgba(54, 40, 25, .08);
+}
+#content { max-width: none !important; width: auto !important; padding: 0 !important; }
+#content h1 { display: none; }
+.breadcrumbs { margin-bottom: 0 !important; }
+.receipts-dashboard { color: var(--rs-text); background: radial-gradient(circle at top left, #fff8ed 0, var(--rs-bg) 420px); margin: -20px -20px 0; padding: 28px 34px 40px; min-height: 100vh; box-sizing: border-box; }
+.receipts-shell { max-width: 1540px; margin: 0 auto; }
+.receipts-hero { display: grid; grid-template-columns: minmax(320px, 1fr) auto; gap: 22px; align-items: end; margin-bottom: 22px; }
+.receipts-eyebrow { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--rs-muted); font-weight: 800; }
+.receipts-title { margin: 6px 0 8px; font-size: clamp(30px, 3vw, 48px); line-height: 1.05; font-weight: 900; color: var(--rs-text); }
+.receipts-subtitle { color: var(--rs-muted); font-size: 16px; margin: 0; }
+.receipts-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; background: rgba(255,255,255,.66); border: 1px solid var(--rs-border); border-radius: 18px; padding: 14px; box-shadow: var(--rs-shadow); }
+.receipts-form label { font-weight: 800; color: var(--rs-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.receipts-form select, .receipts-form input { min-height: 42px; border-radius: 12px; border: 1px solid var(--rs-border); padding: 0 12px; background: white; }
+.receipts-form select { min-width: 260px; }
+.rs-button, .receipts-form .button { min-height: 42px; border: 0 !important; border-radius: 12px !important; padding: 10px 16px !important; background: var(--rs-primary) !important; color: #fff !important; font-weight: 800 !important; text-decoration: none !important; }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 24px; }
+.action-row a { display: inline-flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 999px; background: #fff; color: var(--rs-text); border: 1px solid var(--rs-border); box-shadow: 0 5px 16px rgba(54,40,25,.05); text-decoration: none; font-weight: 800; }
+.action-row a.primary { background: var(--rs-primary); color: white; border-color: var(--rs-primary); }
+.receipts-cards { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin: 18px 0 20px; }
+.receipts-card { background: var(--rs-card); border: 1px solid var(--rs-border); border-radius: 24px; padding: 22px; box-shadow: var(--rs-shadow); min-height: 124px; position: relative; overflow: hidden; }
+.receipts-card::after { content: ''; position: absolute; right: -34px; top: -34px; width: 110px; height: 110px; border-radius: 999px; background: var(--rs-primary-soft); }
+.receipts-card.main { grid-column: span 4; background: linear-gradient(135deg, #2f6f7e, #4b95a6); color: white; }
+.receipts-card.main::after { background: rgba(255,255,255,.16); }
+.receipts-card.main .label, .receipts-card.main .hint { color: rgba(255,255,255,.84); }
+.receipts-card.medium { grid-column: span 2; }
+.receipts-card.wide { grid-column: span 3; }
+.receipts-card .label { color: var(--rs-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 900; }
+.receipts-card strong { display: block; font-size: clamp(26px, 2.3vw, 40px); margin-top: 10px; line-height: 1.05; letter-spacing: -.03em; }
+.receipts-card .hint { color: var(--rs-muted); margin-top: 10px; font-size: 14px; line-height: 1.35; }
+.receipts-card.ok { border-top: 5px solid var(--rs-green); }
+.receipts-card.warning { border-top: 5px solid var(--rs-orange); }
+.receipts-card.danger { border-top: 5px solid var(--rs-red); }
+.receipts-main-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(420px, .85fr); gap: 20px; align-items: start; }
+.receipts-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; margin-bottom: 20px; }
+.receipts-panel { background: rgba(255,250,247,.92); border: 1px solid var(--rs-border); border-radius: 24px; padding: 22px; margin-bottom: 20px; box-shadow: var(--rs-shadow); }
+.receipts-panel h2 { margin: 0 0 16px; font-size: 22px; letter-spacing: -.02em; }
+.panel-kicker { margin: -8px 0 18px; color: var(--rs-muted); }
+.chart-row { display: grid; grid-template-columns: minmax(160px, 230px) minmax(220px, 1fr) 120px 90px; gap: 14px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--rs-border); }
 .chart-row:last-child { border-bottom: 0; }
-.chart-label { font-weight: 700; overflow-wrap: anywhere; }
-.chart-value { text-align: right; white-space: nowrap; }
-.big-meter { margin-top: 10px; }
-.big-meter .visual-bar { height: 18px; }
-.receipts-table { width: 100%; border-collapse: collapse; }
-.receipts-table th, .receipts-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
-.receipts-empty { padding: 30px; border: 2px dashed var(--border-color); border-radius: 14px; text-align: center; color: var(--body-quiet-color); background: rgba(127,127,127,.04); }
+.chart-label { font-weight: 900; overflow-wrap: anywhere; }
+.chart-value { text-align: right; white-space: nowrap; font-weight: 800; }
+.visual-bar { height: 18px; background: #eee3dc; border-radius: 999px; overflow: hidden; position: relative; min-width: 180px; }
+.visual-bar span { display: block; height: 100%; background: linear-gradient(90deg, #2f6f7e, #72b5c3); border-radius: 999px; min-width: 5px; }
+.visual-bar.saved span { background: linear-gradient(90deg, #2f8f5b, #9bd18c); }
+.visual-bar.danger span { background: linear-gradient(90deg, #c7791f, #e8b05e); }
+.receipts-table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
+.receipts-table th { color: var(--rs-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 0 10px 4px; }
+.receipts-table td { padding: 13px 10px; background: #fff; border-top: 1px solid var(--rs-border); border-bottom: 1px solid var(--rs-border); vertical-align: middle; }
+.receipts-table td:first-child { border-left: 1px solid var(--rs-border); border-radius: 14px 0 0 14px; }
+.receipts-table td:last-child { border-right: 1px solid var(--rs-border); border-radius: 0 14px 14px 0; }
+.receipts-table a { font-weight: 800; }
+.amount { font-weight: 900; white-space: nowrap; }
+.badge { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 999px; background: var(--rs-primary-soft); color: var(--rs-primary); font-weight: 900; font-size: 12px; }
+.receipts-empty { padding: 34px; border: 2px dashed var(--rs-border); border-radius: 20px; text-align: center; color: var(--rs-muted); background: rgba(255,255,255,.55); }
 .problem-list { display: grid; gap: 12px; }
-.problem-item { padding: 14px; border-radius: 12px; border: 1px solid var(--border-color); }
-.problem-item.warning { background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.45); }
-.problem-item.ok { background: rgba(46,125,50,.08); border-color: rgba(46,125,50,.35); }
-.action-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 20px; }
-.action-row a { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--button-bg); color: var(--button-fg); text-decoration: none; }
-@media (max-width: 1000px) { .receipts-grid, .receipts-two { grid-template-columns: 1fr; } .chart-row { grid-template-columns: 1fr; } .chart-value { text-align: left; } }
+.problem-item { padding: 16px; border-radius: 18px; border: 1px solid var(--rs-border); background: #fff; }
+.problem-item.warning { background: #fff7e9; border-color: rgba(199,121,31,.25); }
+.problem-item.ok { background: #edf8f1; border-color: rgba(47,143,91,.20); }
+.problem-item strong { display: block; margin-bottom: 5px; }
+@media (max-width: 1200px) { .receipts-card.main, .receipts-card.wide { grid-column: span 6; } .receipts-card.medium { grid-column: span 3; } .receipts-main-grid, .receipts-two { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .receipts-dashboard { padding: 20px 14px 32px; margin: -20px -10px 0; } .receipts-hero { grid-template-columns: 1fr; } .receipts-card.main, .receipts-card.wide, .receipts-card.medium { grid-column: span 12; } .chart-row { grid-template-columns: 1fr; } .chart-value { text-align: left; } }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="receipts-dashboard">
+<div class="receipts-dashboard"><div class="receipts-shell">
   <div class="receipts-hero">
     <div>
-      <h1>Paragony — dashboard</h1>
-      {% if selected_family %}<p>Pokazuję dane dla rodziny: <strong>{{ selected_family.name }}</strong></p>{% else %}<p>Brak wybranej rodziny.</p>{% endif %}
+      <div class="receipts-eyebrow">Budżet rodzinny</div>
+      <div class="receipts-title">Dashboard wydatków</div>
+      {% if selected_family %}<p class="receipts-subtitle">Dane dla rodziny <strong>{{ selected_family.name }}</strong>. Paragony i wydatki bankowe bez paragonu są pokazane razem.</p>{% else %}<p class="receipts-subtitle">Brak wybranej rodziny.</p>{% endif %}
     </div>
     <form method="get" class="receipts-form">
       <div><label for="family">Rodzina</label><br><select name="family" id="family">{% for family in families %}<option value="{{ family.id }}" {% if selected_family and selected_family.id == family.id %}selected{% endif %}>{{ family.name }}</option>{% endfor %}</select></div>
-      <div><label for="subcategory_limit">Subkategorie</label><br><input type="number" id="subcategory_limit" name="subcategory_limit" min="3" max="50" value="{{ subcategory_limit }}"></div>
-      <button type="submit" class="button">Zmień filtr</button>
+      <div><label for="subcategory_limit">Top subkategorii</label><br><input type="number" id="subcategory_limit" name="subcategory_limit" min="3" max="50" value="{{ subcategory_limit }}"></div>
+      <button type="submit" class="button">Zastosuj</button>
     </form>
   </div>
 
   <div class="action-row">
+    <a class="primary" href="/admin/receipts-import-bank-statement/">+ Import wyciągu</a>
+    <a href="/admin/receipts/banktransaction/?budget_kind=unmatched_expense">Bank bez paragonu</a>
     <a href="/admin/receipts/receipt/">Paragony</a>
-    <a href="/admin/receipts-import-bank-statement/">Import wyciągu bankowego</a>
-    <a href="/admin/receipts/banktransaction/?budget_kind=unmatched_expense">Wydatki bankowe bez paragonu</a>
     <a href="/admin/receipts/banktransaction/">Transakcje bankowe</a>
     <a href="/admin/receipts/matchcandidate/">Dopasowania</a>
   </div>
 
   <div class="receipts-cards">
-    <div class="receipts-card ok"><div class="label">Wydano razem</div><strong>{{ spent_display }} zł</strong><div class="hint">Paragony: {{ receipt_spent_display }} zł<br>Bank bez paragonu: {{ bank_spent_display }} zł</div></div>
-    <div class="receipts-card ok"><div class="label">Oszczędzono</div><strong>{{ saved_display }} zł</strong><div class="big-meter"><div class="visual-bar saved"><span style="width: {{ savings_rate }}%"></span></div></div><div class="hint">Oszczędności względem wydatków: {{ savings_rate }}%</div></div>
-    <div class="receipts-card"><div class="label">Paragony</div><strong>{{ receipt_count }}</strong><div class="hint">Produkty: {{ item_count }}</div></div>
-    <div class="receipts-card {% if unmatched_count %}warning{% else %}ok{% endif %}"><div class="label">Bank bez paragonu</div><strong>{{ unmatched_count }}</strong><div class="big-meter"><div class="visual-bar danger"><span style="width: {{ unmatched_rate }}%"></span></div></div><div class="hint">Liczone jako osobne wydatki.</div></div>
-    <div class="receipts-card {% if pending_match_count %}warning{% else %}ok{% endif %}"><div class="label">Dopasowania do decyzji</div><strong>{{ pending_match_count }}</strong></div>
-    <div class="receipts-card {% if duplicate_count %}warning{% else %}ok{% endif %}"><div class="label">Duplikaty</div><strong>{{ duplicate_count }}</strong></div>
+    <div class="receipts-card main"><div class="label">Wydano razem</div><strong>{{ spent_display }} zł</strong><div class="hint">Paragony: {{ receipt_spent_display }} zł · Bank bez paragonu: {{ bank_spent_display }} zł</div></div>
+    <div class="receipts-card wide ok"><div class="label">Oszczędzono</div><strong>{{ saved_display }} zł</strong><div class="hint">{{ savings_rate }}% względem wydatków z paragonów.</div></div>
+    <div class="receipts-card medium"><div class="label">Paragony</div><strong>{{ receipt_count }}</strong><div class="hint">{{ item_count }} produktów</div></div>
+    <div class="receipts-card medium {% if unmatched_count %}warning{% else %}ok{% endif %}"><div class="label">Bank bez paragonu</div><strong>{{ unmatched_count }}</strong><div class="hint">Liczone jako osobne wydatki</div></div>
+    <div class="receipts-card medium {% if pending_match_count %}warning{% else %}ok{% endif %}"><div class="label">Do dopasowania</div><strong>{{ pending_match_count }}</strong></div>
   </div>
 
   <div class="receipts-two">
-    <div class="receipts-panel"><h2>Główne kategorie</h2>{% if category_rows %}{% for row in category_rows %}<div class="chart-row"><div class="chart-label">{{ row.category }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent_display }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak kategorii.</div>{% endif %}</div>
-    <div class="receipts-panel"><h2>Subkategorie</h2>{% if subcategory_rows %}{% for row in subcategory_rows %}<div class="chart-row"><div class="chart-label">{{ row.subcategory }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent_display }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak subkategorii.</div>{% endif %}</div>
+    <div class="receipts-panel"><h2>Największe kategorie</h2><p class="panel-kicker">Produkty z paragonów + wydatki bankowe bez paragonu.</p>{% if category_rows %}{% for row in category_rows %}<div class="chart-row"><div class="chart-label">{{ row.category }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent_display }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak kategorii.</div>{% endif %}</div>
+    <div class="receipts-panel"><h2>Największe subkategorie</h2><p class="panel-kicker">Najbardziej szczegółowy widok wydatków.</p>{% if subcategory_rows %}{% for row in subcategory_rows %}<div class="chart-row"><div class="chart-label">{{ row.subcategory }}</div><div><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></div><div class="chart-value">{{ row.spent_display }} zł</div><div class="chart-value">{{ row.count }} poz.</div></div>{% endfor %}{% else %}<div class="receipts-empty">Brak subkategorii.</div>{% endif %}</div>
   </div>
 
-  <div class="receipts-grid">
+  <div class="receipts-main-grid">
     <div>
-      <div class="receipts-panel"><h2>Miesięczne wydatki z paragonów</h2>{% if monthly_rows %}<table class="receipts-table"><thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead><tbody>{% for row in monthly_rows %}<tr><td><strong>{{ row.month|date:"Y-m" }}</strong></td><td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td><td>{{ row.spent_display }} zł</td><td>{{ row.saved_display }} zł</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak paragonów z datą.</div>{% endif %}</div>
-      <div class="receipts-panel"><h2>Transakcje bankowe bez paragonu</h2>{% if recent_unmatched_transactions %}<table class="receipts-table"><thead><tr><th>Data</th><th>Opis</th><th>Kategoria</th><th>Kwota</th></tr></thead><tbody>{% for tx in recent_unmatched_transactions %}<tr><td>{{ tx.transaction_at|date:"Y-m-d" }}</td><td><a href="/admin/receipts/banktransaction/{{ tx.id }}/change/">{{ tx.merchant_name|default:tx.raw_description }}</a></td><td>{{ tx.category|default:"inne" }} / {{ tx.subcategory|default:"inne" }}</td><td>{{ tx.amount|cut:"-" }} {{ tx.currency }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak niedopasowanych wydatków bankowych.</div>{% endif %}</div>
+      <div class="receipts-panel"><h2>Transakcje bankowe bez paragonu</h2><p class="panel-kicker">Te wydatki są już uwzględnione w dashboardzie jako osobne koszty.</p>{% if recent_unmatched_transactions %}<table class="receipts-table"><thead><tr><th>Data</th><th>Opis</th><th>Kategoria</th><th>Kwota</th></tr></thead><tbody>{% for tx in recent_unmatched_transactions %}<tr><td>{{ tx.transaction_at|date:"Y-m-d" }}</td><td><a href="/admin/receipts/banktransaction/{{ tx.id }}/change/">{{ tx.merchant_name|default:tx.raw_description }}</a></td><td><span class="badge">{{ tx.category|default:"inne" }} / {{ tx.subcategory|default:"inne" }}</span></td><td class="amount">{{ tx.amount|cut:"-" }} {{ tx.currency }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak wydatków bankowych bez paragonu.</div>{% endif %}</div>
+      <div class="receipts-panel"><h2>Miesięczne wydatki z paragonów</h2>{% if monthly_rows %}<table class="receipts-table"><thead><tr><th>Miesiąc</th><th>Wydatki</th><th>Kwota</th><th>Oszczędzono</th><th>Paragony</th></tr></thead><tbody>{% for row in monthly_rows %}<tr><td><strong>{{ row.month|date:"Y-m" }}</strong></td><td><div class="visual-bar"><span style="width: {{ row.bar_width }}%"></span></div></td><td class="amount">{{ row.spent_display }} zł</td><td>{{ row.saved_display }} zł</td><td>{{ row.count }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak paragonów z datą.</div>{% endif %}</div>
     </div>
-    <div><div class="receipts-panel"><h2>Do sprawdzenia</h2><div class="problem-list">{% for problem in problem_cards %}<div class="problem-item {{ problem.level }}"><strong>{{ problem.label }}: {{ problem.value }}</strong><br><span>{{ problem.hint }}</span></div>{% endfor %}</div></div><div class="receipts-panel"><h2>Dopasowania</h2>{% if pending_matches %}<table class="receipts-table"><thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead><tbody>{% for match in pending_matches %}<tr><td><strong>{{ match.score|floatformat:2 }}</strong></td><td><a href="/admin/receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td><td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak kandydatów do ręcznego dopasowania.</div>{% endif %}</div></div>
+    <div>
+      <div class="receipts-panel"><h2>Do sprawdzenia</h2><div class="problem-list">{% for problem in problem_cards %}<div class="problem-item {{ problem.level }}"><strong>{{ problem.label }}: {{ problem.value }}</strong><span>{{ problem.hint }}</span></div>{% endfor %}</div></div>
+      <div class="receipts-panel"><h2>Dopasowania</h2>{% if pending_matches %}<table class="receipts-table"><thead><tr><th>Score</th><th>Paragon</th><th>Transakcja</th></tr></thead><tbody>{% for match in pending_matches %}<tr><td><strong>{{ match.score|floatformat:2 }}</strong></td><td><a href="/admin/receipts/matchcandidate/{{ match.id }}/change/">{{ match.receipt.merchant_name }} / {{ match.receipt.total_amount }}</a></td><td>{{ match.bank_transaction.merchant_name }} / {{ match.bank_transaction.amount }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Brak kandydatów do ręcznego dopasowania.</div>{% endif %}</div>
+    </div>
   </div>
 
-  <div class="receipts-panel"><h2>Ostatnie paragony</h2>{% if recent_receipts %}<table class="receipts-table"><thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead><tbody>{% for receipt in recent_receipts %}<tr><td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td><td><a href="/admin/receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td><td>{{ receipt.user }}</td><td>{{ receipt.total_amount }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Nie ma jeszcze paragonów.</div>{% endif %}</div>
-</div>
+  <div class="receipts-panel"><h2>Ostatnie paragony</h2>{% if recent_receipts %}<table class="receipts-table"><thead><tr><th>Data</th><th>Sklep</th><th>Użytkownik</th><th>Kwota</th></tr></thead><tbody>{% for receipt in recent_receipts %}<tr><td>{{ receipt.purchased_at|date:"Y-m-d H:i" }}</td><td><a href="/admin/receipts/receipt/{{ receipt.id }}/change/">{{ receipt.merchant_name|default:"—" }}</a></td><td>{{ receipt.user }}</td><td class="amount">{{ receipt.total_amount }} zł</td></tr>{% endfor %}</tbody></table>{% else %}<div class="receipts-empty">Nie ma jeszcze paragonów.</div>{% endif %}</div>
+</div></div>
 {% endblock %}
