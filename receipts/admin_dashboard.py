@@ -39,14 +39,49 @@ def family_receipts_queryset(request):
     return qs
 
 
+def family_bank_queryset(request):
+    family = selected_family(request)
+    qs = BankTransaction.objects.all()
+    if family:
+        qs = qs.filter(family=family)
+    elif not request.user.is_superuser:
+        qs = qs.none()
+    return qs
+
+
 def money(value):
     return value or Decimal('0.00')
+
+
+def format_money(value):
+    return f'{money(value):.2f}'
 
 
 def percent(part, whole):
     if not whole:
         return 0
     return int((Decimal(part) / Decimal(whole)) * 100)
+
+
+def merge_chart_rows(primary, secondary, label_key, limit=None):
+    merged = {}
+    for row in list(primary) + list(secondary):
+        label = row.get(label_key) or 'inne'
+        if label not in merged:
+            merged[label] = {label_key: label, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0}
+        merged[label]['spent'] += money(row.get('spent'))
+        merged[label]['saved'] += money(row.get('saved'))
+        merged[label]['count'] += row.get('count') or 0
+    rows = sorted(merged.values(), key=lambda item: item['spent'], reverse=True)
+    if limit:
+        rows = rows[:limit]
+    max_spent = max([row['spent'] for row in rows] + [Decimal('1.00')])
+    for row in rows:
+        row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
+        row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
+        row['spent_display'] = format_money(row['spent'])
+        row['saved_display'] = format_money(row['saved'])
+    return rows
 
 
 def prepare_bar_rows(rows, label_key, limit=None, add_other=False):
@@ -69,6 +104,8 @@ def prepare_bar_rows(rows, label_key, limit=None, add_other=False):
     for row in rows:
         row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
         row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
+        row['spent_display'] = format_money(row['spent'])
+        row['saved_display'] = format_money(row['saved'])
     return rows
 
 
@@ -76,14 +113,19 @@ def receipts_dashboard(request):
     family = selected_family(request)
     families = visible_families(request.user)
     receipts = family_receipts_queryset(request)
+    banks = family_bank_queryset(request)
     receipt_ids = receipts.values_list('id', flat=True)
     subcategory_limit = int(request.GET.get('subcategory_limit') or 12)
     subcategory_limit = max(3, min(50, subcategory_limit))
 
-    spent = money(receipts.aggregate(total=Sum('total_amount'))['total'])
+    receipt_spent = money(receipts.aggregate(total=Sum('total_amount'))['total'])
     saved = money(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).aggregate(total=Sum('discount_amount'))['total'])
     receipt_count = receipts.count()
     item_count = ReceiptItem.objects.filter(receipt_id__in=receipt_ids).count()
+
+    unmatched_transactions = banks.filter(matched_receipt__isnull=True, amount__lt=0)
+    bank_spent = abs(money(unmatched_transactions.aggregate(total=Sum('amount'))['total']))
+    total_spent = receipt_spent + bank_spent
 
     duplicate_qs = Receipt.objects.filter(duplicate_of__isnull=False)
     if family:
@@ -92,16 +134,9 @@ def receipts_dashboard(request):
         duplicate_qs = duplicate_qs.filter(user=request.user)
     duplicate_count = duplicate_qs.count()
 
-    unmatched_transactions = BankTransaction.objects.filter(matched_receipt__isnull=True, amount__lt=0)
-    all_transactions = BankTransaction.objects.filter(amount__lt=0)
-    if family:
-        unmatched_transactions = unmatched_transactions.filter(family=family)
-        all_transactions = all_transactions.filter(family=family)
-    elif not request.user.is_superuser:
-        unmatched_transactions = unmatched_transactions.none()
-        all_transactions = all_transactions.none()
+    all_expense_transactions = banks.filter(amount__lt=0)
     unmatched_count = unmatched_transactions.count()
-    transaction_count = all_transactions.count()
+    transaction_count = all_expense_transactions.count()
 
     pending_matches = MatchCandidate.objects.filter(status='needs_review')
     if family:
@@ -118,9 +153,20 @@ def receipts_dashboard(request):
         row['saved'] = money(row['saved'])
         row['bar_width'] = int((row['spent'] / max_spent) * 100) if max_spent else 0
         row['saved_width'] = min(100, percent(row['saved'], row['spent'])) if row['spent'] else 0
+        row['spent_display'] = format_money(row['spent'])
+        row['saved_display'] = format_money(row['saved'])
 
-    category_rows = prepare_bar_rows(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('category').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent'), 'category')
-    subcategory_rows = prepare_bar_rows(ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('subcategory').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent'), 'subcategory', limit=subcategory_limit, add_other=True)
+    receipt_category_rows = ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('category').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')
+    bank_category_rows = unmatched_transactions.values('category').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
+    bank_category_rows = [{'category': row['category'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in bank_category_rows]
+    category_rows = merge_chart_rows(receipt_category_rows, bank_category_rows, 'category')
+
+    receipt_subcategory_rows = ReceiptItem.objects.filter(receipt_id__in=receipt_ids).values('subcategory').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')
+    bank_subcategory_rows = unmatched_transactions.values('subcategory').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
+    bank_subcategory_rows = [{'subcategory': row['subcategory'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in bank_subcategory_rows]
+    subcategory_rows = merge_chart_rows(prepare_bar_rows(receipt_subcategory_rows, 'subcategory', limit=subcategory_limit, add_other=True), bank_subcategory_rows, 'subcategory', limit=subcategory_limit)
+
+    recent_unmatched_transactions = unmatched_transactions.order_by('-transaction_at', '-booked_at', '-id')[:12]
 
     context = {
         **admin.site.each_context(request),
@@ -128,9 +174,13 @@ def receipts_dashboard(request):
         'families': families,
         'selected_family': family,
         'subcategory_limit': subcategory_limit,
-        'spent': spent,
+        'spent': total_spent,
+        'spent_display': format_money(total_spent),
+        'receipt_spent_display': format_money(receipt_spent),
+        'bank_spent_display': format_money(bank_spent),
         'saved': saved,
-        'savings_rate': min(100, percent(saved, spent)) if spent else 0,
+        'saved_display': format_money(saved),
+        'savings_rate': min(100, percent(saved, total_spent)) if total_spent else 0,
         'receipt_count': receipt_count,
         'item_count': item_count,
         'unmatched_count': unmatched_count,
@@ -138,14 +188,15 @@ def receipts_dashboard(request):
         'pending_match_count': pending_match_count,
         'duplicate_count': duplicate_count,
         'problem_cards': [
-            {'label': 'Niedopasowane wydatki bankowe', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Tylko ujemne transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
-            {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
+            {'label': 'Wydatki bankowe bez paragonu', 'value': unmatched_count, 'level': 'warning' if unmatched_count else 'ok', 'hint': 'Te transakcje są liczone jako osobne wydatki i są widoczne poniżej.'},
+            {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pary paragon–bank, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
             {'label': 'Duplikaty paragonów', 'value': duplicate_count, 'level': 'warning' if duplicate_count else 'ok', 'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.'},
         ],
         'monthly_rows': monthly_rows,
         'category_rows': category_rows,
         'subcategory_rows': subcategory_rows,
         'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:10],
+        'recent_unmatched_transactions': recent_unmatched_transactions,
         'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:10],
     }
     return render(request, 'admin/receipts/dashboard.html', context)
@@ -154,6 +205,7 @@ def receipts_dashboard(request):
 def import_bank_statement_admin(request):
     from .bank_parsers import parse_bank_statement
     from .forms import BankStatementImportForm
+    from .openai_bank_transactions import apply_bank_transaction_classification
     from .services import match_bank_transactions_for_receipt
 
     family = selected_family(request)
@@ -164,7 +216,8 @@ def import_bank_statement_admin(request):
             file_obj = form.cleaned_data['file']
             created = 0
             for row in parse_bank_statement(file_obj, bank):
-                BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file_obj.name, **row)
+                tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file_obj.name, **row)
+                apply_bank_transaction_classification(tx)
                 created += 1
             if family:
                 for receipt in Receipt.objects.filter(family=family, duplicate_of__isnull=True):
