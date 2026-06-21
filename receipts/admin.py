@@ -57,6 +57,31 @@ class AppLoginTokenInline(admin.TabularInline):
     fields = ('name', 'device_id', 'is_active', 'created_at', 'last_used_at')
 
 
+class BankTransactionKindFilter(admin.SimpleListFilter):
+    title = 'typ budżetowy'
+    parameter_name = 'budget_kind'
+
+    def lookups(self, request, model_admin):
+        return [
+            ('unmatched_expense', 'wydatki bez paragonu'),
+            ('matched_expense', 'wydatki dopasowane'),
+            ('income', 'przychody'),
+            ('internal', 'przelewy wewnętrzne'),
+        ]
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == 'unmatched_expense':
+            return queryset.filter(amount__lt=0, matched_receipt__isnull=True)
+        if value == 'matched_expense':
+            return queryset.filter(amount__lt=0, matched_receipt__isnull=False)
+        if value == 'income':
+            return queryset.filter(amount__gt=0)
+        if value == 'internal':
+            return queryset.filter(transaction_type='internal_transfer')
+        return queryset
+
+
 @admin.register(Family)
 class FamilyAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'dashboard_link', 'member_count', 'receipt_count', 'family_spent', 'family_saved', 'created_at')
@@ -185,13 +210,38 @@ class ReceiptAdmin(DefaultFamilyFilterMixin, admin.ModelAdmin):
 
 @admin.register(BankTransaction)
 class BankTransactionAdmin(DefaultFamilyFilterMixin, admin.ModelAdmin):
-    list_display = ('id', 'family', 'user', 'bank', 'booked_at', 'transaction_at', 'amount', 'merchant_name', 'matched_receipt')
-    list_filter = ('family', 'user', 'bank', 'booked_at')
-    search_fields = ('merchant_name', 'raw_description')
+    list_display = ('id', 'family', 'user', 'bank', 'booked_at', 'transaction_at', 'direction_label', 'display_amount', 'merchant_name', 'category', 'subcategory', 'matched_receipt', 'budget_status')
+    list_filter = ('family', 'user', 'bank', BankTransactionKindFilter, 'transaction_type', 'category', 'booked_at')
+    search_fields = ('merchant_name', 'raw_description', 'corrected_description')
     date_hierarchy = 'booked_at'
+    readonly_fields = ('display_amount', 'direction_label', 'budget_status')
 
     def get_queryset(self, request):
         return family_filtered_queryset(request, super().get_queryset(request))
+
+    def direction_label(self, obj):
+        if obj.amount < 0:
+            return 'wydatek'
+        if obj.amount > 0:
+            return 'przychód'
+        return 'neutralne'
+    direction_label.short_description = 'typ'
+
+    def display_amount(self, obj):
+        if obj.amount < 0:
+            return f'{abs(obj.amount)} {obj.currency}'
+        return f'{obj.amount} {obj.currency}'
+    display_amount.short_description = 'kwota do budżetu'
+
+    def budget_status(self, obj):
+        if obj.amount < 0 and obj.matched_receipt_id:
+            return 'dopasowane do paragonu'
+        if obj.amount < 0:
+            return 'bez paragonu — liczone jako osobny wydatek'
+        if obj.amount > 0:
+            return 'przychód'
+        return 'neutralne'
+    budget_status.short_description = 'status budżetowy'
 
 
 @admin.register(MatchCandidate)
