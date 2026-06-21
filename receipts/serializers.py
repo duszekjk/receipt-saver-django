@@ -32,9 +32,22 @@ class ReceiptSerializer(serializers.ModelSerializer):
 
 
 class BankTransactionSerializer(serializers.ModelSerializer):
+    direction = serializers.SerializerMethodField()
+    expense_amount = serializers.SerializerMethodField()
+
     class Meta:
         model = BankTransaction
         fields = '__all__'
+
+    def get_direction(self, obj):
+        if obj.amount < 0:
+            return 'expense'
+        if obj.amount > 0:
+            return 'income'
+        return 'neutral'
+
+    def get_expense_amount(self, obj):
+        return abs(obj.amount) if obj.amount < 0 else 0
 
 
 class MatchCandidateSerializer(serializers.ModelSerializer):
