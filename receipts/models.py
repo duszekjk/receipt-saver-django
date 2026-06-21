@@ -119,6 +119,11 @@ class ReceiptItem(models.Model):
 
 
 class BankTransaction(models.Model):
+    TRANSACTION_EXPENSE = 'expense'
+    TRANSACTION_INCOME = 'income'
+    TRANSACTION_INTERNAL = 'internal_transfer'
+    TRANSACTION_NEUTRAL = 'neutral'
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     bank = models.CharField(max_length=32, default='unknown')
@@ -131,6 +136,17 @@ class BankTransaction(models.Model):
     currency = models.CharField(max_length=8, default='PLN')
     source_file_name = models.CharField(max_length=255, blank=True)
     matched_receipt = models.ForeignKey(Receipt, null=True, blank=True, on_delete=models.SET_NULL)
+    category = models.CharField(max_length=100, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, blank=True, db_index=True)
+    transaction_type = models.CharField(max_length=32, choices=[
+        (TRANSACTION_EXPENSE, 'Expense'),
+        (TRANSACTION_INCOME, 'Income'),
+        (TRANSACTION_INTERNAL, 'Internal transfer'),
+        (TRANSACTION_NEUTRAL, 'Neutral'),
+    ], blank=True, db_index=True)
+    corrected_description = models.TextField(blank=True)
+    classification_source = models.CharField(max_length=32, blank=True)
+    raw_classification_json = models.JSONField(default=dict, blank=True)
     raw_row = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
