@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import pandas as pd
@@ -93,7 +94,7 @@ def read_csv_rows(raw):
     header_index = find_header_line(lines)
     table_text = '\n'.join(lines[header_index:])
     try:
-        dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';,\t')
+        dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';\t')
     except csv.Error:
         dialect = csv.excel
         dialect.delimiter = ';'
@@ -121,7 +122,16 @@ def read_statement_rows(file_obj):
     return read_csv_rows(raw)
 
 
-def pick(row, *keys):
+def exact_pick(row, *keys):
+    normalized = {normalize_text(k): v for k, v in row.items()}
+    for key in keys:
+        value = normalized.get(normalize_text(key))
+        if value not in (None, ''):
+            return value
+    return ''
+
+
+def contains_pick(row, *keys):
     lower = {normalize_text(k): v for k, v in row.items()}
     for key in keys:
         normalized_key = normalize_text(key)
@@ -130,6 +140,25 @@ def pick(row, *keys):
                 if value not in (None, ''):
                     return value
     return ''
+
+
+def pick(row, *keys):
+    return exact_pick(row, *keys) or contains_pick(row, *keys)
+
+
+def clean_currency(value):
+    value = str(value or '').strip().strip('"').upper()
+    if re.fullmatch(r'[A-Z]{3}', value):
+        return value
+    return 'PLN'
+
+
+def get_ing_amount_and_currency(row):
+    amount = exact_pick(row, 'Kwota transakcji (waluta rachunku)')
+    currency = exact_pick(row, 'Waluta')
+    if not amount:
+        amount = contains_pick(row, 'Kwota transakcji')
+    return amount, clean_currency(currency)
 
 
 def parse_bank_statement(file_obj, bank: str):
@@ -145,8 +174,11 @@ def parse_bank_statement(file_obj, bank: str):
             ]
             if part
         )
-        amount = pick(row, 'Kwota transakcji', 'Kwota', 'Obciążenia', 'Obciazenia', 'Uznania')
-        currency = pick(row, 'Waluta') or 'PLN'
+        if bank == 'ing':
+            amount, currency = get_ing_amount_and_currency(row)
+        else:
+            amount = pick(row, 'Kwota transakcji', 'Kwota', 'Obciążenia', 'Obciazenia', 'Uznania')
+            currency = clean_currency(exact_pick(row, 'Waluta') or 'PLN')
 
         parsed_amount = parse_amount(amount)
         parsed_date = parse_date(tx_date) or parse_date(booked)
@@ -162,7 +194,7 @@ def parse_bank_statement(file_obj, bank: str):
             'merchant_normalized': normalize_text(desc),
             'raw_description': desc,
             'amount': parsed_amount,
-            'currency': str(currency or 'PLN')[:3],
+            'currency': currency,
             'raw_row': row,
         }
 
