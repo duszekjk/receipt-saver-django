@@ -92,8 +92,8 @@ def receipts_dashboard(request):
         duplicate_qs = duplicate_qs.filter(user=request.user)
     duplicate_count = duplicate_qs.count()
 
-    unmatched_transactions = BankTransaction.objects.filter(matched_receipt__isnull=True)
-    all_transactions = BankTransaction.objects.all()
+    unmatched_transactions = BankTransaction.objects.filter(matched_receipt__isnull=True, amount__lt=0)
+    all_transactions = BankTransaction.objects.filter(amount__lt=0)
     if family:
         unmatched_transactions = unmatched_transactions.filter(family=family)
         all_transactions = all_transactions.filter(family=family)
@@ -138,7 +138,7 @@ def receipts_dashboard(request):
         'pending_match_count': pending_match_count,
         'duplicate_count': duplicate_count,
         'problem_cards': [
-            {'label': 'Niedopasowane transakcje', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
+            {'label': 'Niedopasowane wydatki bankowe', 'value': unmatched_count, 'level': 'danger' if unmatched_count else 'ok', 'hint': 'Tylko ujemne transakcje bankowe bez paragonu lub bez automatycznego dopasowania.'},
             {'label': 'Dopasowania do decyzji', 'value': pending_match_count, 'level': 'warning' if pending_match_count else 'ok', 'hint': 'Pozycje, które wymagają ręcznego zaakceptowania albo odrzucenia.'},
             {'label': 'Duplikaty paragonów', 'value': duplicate_count, 'level': 'warning' if duplicate_count else 'ok', 'hint': 'Paragony oznaczone jako prawdopodobne duplikaty.'},
         ],
