@@ -8,6 +8,10 @@ from .openai_receipts import parse_receipt_image
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
 
+MIN_REVIEW_SCORE = 0.40
+AUTO_MATCH_SCORE = 0.92
+
+
 def user_family(user):
     profile = getattr(user, 'receipt_profile', None)
     return profile.family if profile and profile.family_id else None
@@ -89,24 +93,26 @@ def find_duplicate_receipt(receipt: Receipt):
 
 
 def match_score(receipt: Receipt, tx: BankTransaction):
+    if tx.amount >= 0:
+        return 0.0, {'ignored': 'income_or_neutral_transaction'}
     amount = money_similarity(receipt.total_amount, abs(tx.amount), Decimal('0.50'))
     date_score = 0.0
     if receipt.purchased_at and (tx.transaction_at or tx.booked_at):
         bank_date = tx.transaction_at or tx.booked_at
         delta_days = (bank_date - receipt.purchased_at.date()).days
-        if -1 <= delta_days <= 7:
-            date_score = 1.0 - max(0, delta_days) / 10.0
+        if -2 <= delta_days <= 10:
+            date_score = 1.0 - min(abs(delta_days), 10) / 10.0
     merchant = text_similarity(receipt.merchant_name, tx.merchant_name or tx.raw_description)
-    payment = 1.0 if 'kart' in (receipt.payment_method or '').lower() else 0.5
-    score = 0.55 * amount + 0.25 * date_score + 0.10 * merchant + 0.10 * payment
-    return score, {'amount': amount, 'date_window': date_score, 'merchant': merchant, 'payment': payment}
+    payment = 1.0 if 'kart' in (receipt.payment_method or '').lower() else 0.7
+    score = 0.60 * amount + 0.25 * date_score + 0.10 * merchant + 0.05 * payment
+    return score, {'amount': amount, 'date_window': date_score, 'merchant': merchant, 'payment': payment, 'bank_amount': str(tx.amount), 'expense_amount': str(abs(tx.amount))}
 
 
 def match_bank_transactions_for_receipt(receipt: Receipt):
     if not receipt.total_amount or not receipt.purchased_at:
         return []
-    start = receipt.purchased_at.date() - timedelta(days=1)
-    end = receipt.purchased_at.date() + timedelta(days=7)
+    start = receipt.purchased_at.date() - timedelta(days=2)
+    end = receipt.purchased_at.date() + timedelta(days=10)
     candidates = BankTransaction.objects.filter(matched_receipt__isnull=True, booked_at__range=[start, end], amount__lt=0)
     if receipt.family_id:
         candidates = candidates.filter(family=receipt.family)
@@ -115,8 +121,8 @@ def match_bank_transactions_for_receipt(receipt: Receipt):
     results = []
     for tx in candidates:
         score, reason = match_score(receipt, tx)
-        if score >= 0.70:
-            status = 'auto_matched' if score >= 0.90 else 'needs_review'
+        if score >= MIN_REVIEW_SCORE:
+            status = 'auto_matched' if score >= AUTO_MATCH_SCORE else 'needs_review'
             obj, _ = MatchCandidate.objects.update_or_create(receipt=receipt, bank_transaction=tx, defaults={'score': score, 'reason': reason, 'status': status})
             if status == 'auto_matched':
                 tx.matched_receipt = receipt
