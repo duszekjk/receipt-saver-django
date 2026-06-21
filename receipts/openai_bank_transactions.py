@@ -1,4 +1,5 @@
 import json
+import re
 from django.conf import settings
 from openai import OpenAI
 from .categories import allowed_bank_categories_prompt_text, normalize_bank_category
@@ -18,6 +19,7 @@ Ważne zasady:
 - Popraw błędy kodowania znaków, np. KA£UØNY -> KAŁUŻNY, POZNA— -> POZNAŃ, ålπski -> Śląski, ksiÍgowania -> księgowania.
 - category i subcategory muszą być wybrane wyłącznie z listy.
 - Nie wolno tworzyć własnych kategorii ani podkategorii.
+- merchant_name nie może być kwotą ani fragmentem liczby. Jeśli nie umiesz wskazać kontrahenta, zwróć pusty string.
 
 Dozwolone kategorie:
 {allowed_bank_categories_prompt_text()}
@@ -43,10 +45,21 @@ JSON_SCHEMA = {
 }
 
 
+def looks_like_amount_fragment(value):
+    value = str(value or '').strip()
+    if not value:
+        return True
+    if len(value) <= 4 and re.fullmatch(r'-?[0-9,.]+', value):
+        return True
+    if re.fullmatch(r'-?[0-9,.]+\s*(pln|eur|usd)?', value.lower()):
+        return True
+    return False
+
+
 def fallback_classification(tx):
     amount = tx.amount
     text = f'{tx.merchant_name} {tx.raw_description}'.lower()
-    if 'smart saver' in text or 'konto oszcz' in text or 'konto direct' in text and tx.user.get_username().lower() in text:
+    if 'smart saver' in text or 'konto oszcz' in text or ('konto direct' in text and tx.user.get_username().lower() in text):
         transaction_type = 'internal_transfer'
         category, subcategory = 'przelewy_wewnetrzne', 'konto_wlasne'
     elif amount > 0:
@@ -100,14 +113,18 @@ def classify_bank_transaction(tx):
     if data.get('transaction_type') not in ['expense', 'income', 'internal_transfer', 'neutral']:
         data['transaction_type'] = fallback_classification(tx)['transaction_type']
     data['corrected_description'] = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
-    data['merchant_name'] = data.get('merchant_name') or tx.merchant_name or ''
+    if looks_like_amount_fragment(data.get('merchant_name')):
+        data['merchant_name'] = tx.merchant_name or ''
     return data
 
 
 def apply_bank_transaction_classification(tx):
+    original_merchant_name = tx.merchant_name or ''
     data = classify_bank_transaction(tx)
-    tx.corrected_description = data.get('corrected_description') or ''
-    tx.merchant_name = data.get('merchant_name') or tx.merchant_name
+    tx.corrected_description = data.get('corrected_description') or tx.raw_description or original_merchant_name
+    # Bank parser output is the source of truth. OpenAI may classify and clean text,
+    # but it must not overwrite the imported counterparty with accidental amount fragments.
+    tx.merchant_name = original_merchant_name
     tx.merchant_normalized = normalize_text(tx.merchant_name)
     tx.transaction_type = data.get('transaction_type') or ''
     tx.category = data.get('category') or ''
