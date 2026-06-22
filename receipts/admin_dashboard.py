@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.contrib import admin, messages
 from django.db.models import Count, Sum
-from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
+from django.db.models.functions import TruncMonth
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 from django.utils import timezone
@@ -51,39 +51,54 @@ def family_bank_queryset(request):
     return qs
 
 
-def rolling_start(period):
-    now = timezone.now()
-    if period == 'last30':
-        return now - timedelta(days=30)
-    if period == 'last90':
-        return now - timedelta(days=90)
-    return None
+def parse_month(value):
+    try:
+        return datetime.strptime(value or '', '%Y-%m').date().replace(day=1)
+    except ValueError:
+        return None
 
 
-def period_trunc(period):
-    if period == 'quarter':
-        return TruncQuarter
-    if period == 'year':
-        return TruncYear
-    return TruncMonth
+def next_month(value):
+    if value.month == 12:
+        return value.replace(year=value.year + 1, month=1, day=1)
+    return value.replace(month=value.month + 1, day=1)
 
 
-def normalize_sort_bucket(value):
+def month_key(value):
     if isinstance(value, datetime):
-        return value.date().isoformat()
+        value = value.date()
     if isinstance(value, date):
-        return value.isoformat()
-    return str(value or '')
+        return value.strftime('%Y-%m')
+    return ''
 
 
-def period_label(value, period):
-    if not value:
-        return ''
-    if period == 'quarter':
-        return f'{value.year} Q{((value.month - 1) // 3) + 1}'
-    if period == 'year':
-        return f'{value.year}'
-    return value.strftime('%Y-%m')
+def available_months_for(receipts, banks):
+    receipt_months = receipts.filter(purchased_at__isnull=False).annotate(month=TruncMonth('purchased_at')).values_list('month', flat=True).distinct()
+    bank_months = banks.filter(transaction_at__isnull=False).annotate(month=TruncMonth('transaction_at')).values_list('month', flat=True).distinct()
+    return sorted({month_key(value) for value in list(receipt_months) + list(bank_months) if value}, reverse=True)
+
+
+def default_month(months):
+    if not months:
+        now = timezone.localdate()
+        previous = now.replace(day=1) - timedelta(days=1)
+        return previous.strftime('%Y-%m')
+    now_key = timezone.localdate().strftime('%Y-%m')
+    older = [month for month in months if month < now_key]
+    return older[0] if older else months[0]
+
+
+def month_label(value):
+    names = {
+        '01': 'styczeń', '02': 'luty', '03': 'marzec', '04': 'kwiecień',
+        '05': 'maj', '06': 'czerwiec', '07': 'lipiec', '08': 'sierpień',
+        '09': 'wrzesień', '10': 'październik', '11': 'listopad', '12': 'grudzień'
+    }
+    try:
+        year, month = value.split('-')
+        return f'{names.get(month, month)} {year}'
+    except ValueError:
+        return value
 
 
 def money(value):
@@ -126,43 +141,26 @@ def merge_rows(primary, secondary, label_key, limit=None):
     return attach_bars(rows)
 
 
-def build_period_rows(period, receipt_items, standalone_expenses):
-    trunc = period_trunc(period)
-    receipt_rows = receipt_items.filter(receipt__purchased_at__isnull=False).annotate(bucket=trunc('receipt__purchased_at')).values('bucket').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id'))
-    bank_rows = standalone_expenses.filter(transaction_at__isnull=False).annotate(bucket=trunc('transaction_at')).values('bucket').annotate(spent=Sum('amount'), count=Count('id'))
-    merged = {}
-    for row in receipt_rows:
-        bucket = row['bucket']
-        key = period_label(bucket, period)
-        merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
-        merged[key]['spent'] += money(row['spent'])
-        merged[key]['saved'] += money(row['saved'])
-        merged[key]['count'] += row['count'] or 0
-    for row in bank_rows:
-        bucket = row['bucket']
-        key = period_label(bucket, period)
-        if key not in merged:
-            merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
-        merged[key]['spent'] += abs(money(row['spent']))
-        merged[key]['count'] += row['count'] or 0
-    rows = sorted(merged.values(), key=lambda item: item['sort'])[-12:]
-    return attach_bars(rows)
+def filter_to_month(receipts, banks, selected_month):
+    start = parse_month(selected_month)
+    if not start:
+        return receipts.none(), banks.none()
+    end = next_month(start)
+    return receipts.filter(purchased_at__gte=start, purchased_at__lt=end), banks.filter(transaction_at__gte=start, transaction_at__lt=end)
 
 
 def receipts_dashboard(request):
     family = selected_family(request)
     families = visible_families(request.user)
-    receipts = family_receipts_queryset(request)
-    banks = family_bank_queryset(request)
+    all_receipts = family_receipts_queryset(request)
+    all_banks = family_bank_queryset(request)
+    available_months = available_months_for(all_receipts, all_banks)
+    selected_month = request.GET.get('month') or default_month(available_months)
+    receipts, banks = filter_to_month(all_receipts, all_banks, selected_month)
+
     subcategory_limit = int(request.GET.get('subcategory_limit') or 12)
     subcategory_limit = max(3, min(50, subcategory_limit))
     selected_category = request.GET.get('category') or ''
-    selected_period = request.GET.get('period') or 'month'
-
-    start = rolling_start(selected_period)
-    if start:
-        receipts = receipts.filter(purchased_at__gte=start)
-        banks = banks.filter(transaction_at__gte=start.date())
 
     receipt_ids = receipts.values_list('id', flat=True)
     receipt_items = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
@@ -197,7 +195,6 @@ def receipts_dashboard(request):
     merchant_bank_rows = [{'merchant_name': row['merchant_name'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in merchant_bank_rows]
     merchant_rows = merge_rows(merchant_receipt_rows, merchant_bank_rows, 'merchant_name', limit=subcategory_limit)
     available_categories = sorted(set([row.get('category') or 'inne' for row in category_rows]))
-    period_rows = build_period_rows(selected_period, receipt_items, standalone_expenses)
 
     pending_matches = MatchCandidate.objects.filter(status='needs_review')
     if family:
@@ -220,8 +217,9 @@ def receipts_dashboard(request):
         'title': 'Dashboard wydatków',
         'families': families,
         'selected_family': family,
-        'selected_period': selected_period,
-        'period_rows': period_rows,
+        'available_months': [{'value': month, 'label': month_label(month)} for month in available_months],
+        'selected_month': selected_month,
+        'selected_month_label': month_label(selected_month),
         'subcategory_limit': subcategory_limit,
         'selected_category': selected_category,
         'available_categories': available_categories,
