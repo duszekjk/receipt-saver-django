@@ -3,7 +3,7 @@ import json
 from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from openai import OpenAI
-from .categories import allowed_categories_prompt_text, normalize_category
+from .categories import allowed_categories_prompt_text, infer_category_from_name
 
 
 def _money(value):
@@ -27,9 +27,14 @@ def _number(value):
 SYSTEM_PROMPT = f'''
 Jesteś parserem polskich paragonów. Zwracasz wyłącznie poprawny JSON.
 Rozpoznaj sklep, datę, godzinę, sumę, produkty, promocje i oszczędności.
-Każdy produkt musi mieć category i subcategory wybrane wyłącznie z poniższej listy.
-Nie wolno tworzyć własnych kategorii ani podkategorii.
-Jeżeli produkt nie pasuje, użyj category="inne" i subcategory="inne".
+
+Bardzo ważne:
+- Zachowuj polskie znaki w nazwach produktów, kategorii i podkategorii.
+- Każdy produkt musi mieć category i subcategory wybrane wyłącznie z poniższej listy.
+- Nie wolno tworzyć własnych kategorii ani podkategorii.
+- category i subcategory zwracaj dokładnie tak, jak są zapisane poniżej, razem z polskimi znakami.
+- Używaj "Inne" wyłącznie wtedy, gdy naprawdę nie da się rozsądnie dopasować produktu.
+- Oczywiste produkty dopasowuj konkretnie: miód = Żywność/miód, róże i kwiaty = Dom/kwiaty, chleb = Żywność/pieczywo.
 
 Dozwolone kategorie:
 {allowed_categories_prompt_text()}
@@ -66,9 +71,10 @@ JSON_SCHEMA = {
 
 
 def _clean_item(item):
-    category, subcategory = normalize_category(item.get('category'), item.get('subcategory'))
+    name = item.get('name') or ''
+    category, subcategory = infer_category_from_name(name, item.get('category'), item.get('subcategory'))
     return {
-        'name': item.get('name') or '',
+        'name': name,
         'quantity': _number(item.get('quantity')),
         'unit_price': _money(item.get('unit_price')),
         'paid_price': _money(item.get('paid_price')) or '0.00',
@@ -104,7 +110,7 @@ def parse_receipt_image(image_path: str) -> dict:
         messages=[
             {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': [
-                {'type': 'text', 'text': 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem.'},
+                {'type': 'text', 'text': 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem. Zachowaj polskie znaki i nie używaj kategorii Inne dla oczywistych produktów.'},
                 {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}}
             ]},
         ],
