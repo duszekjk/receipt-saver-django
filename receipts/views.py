@@ -88,6 +88,17 @@ def next_month(value):
     return value.replace(month=value.month + 1, day=1)
 
 
+def filter_month_qs(receipts_qs, bank_qs, selected_month):
+    month_start = parse_month(selected_month)
+    if not month_start:
+        return receipts_qs.none(), bank_qs.none()
+    month_end = next_month(month_start)
+    return (
+        receipts_qs.filter(purchased_at__gte=month_start, purchased_at__lt=month_end),
+        bank_qs.filter(transaction_at__gte=month_start, transaction_at__lt=month_end),
+    )
+
+
 def month_key(value):
     if isinstance(value, datetime):
         value = value.date()
@@ -251,11 +262,8 @@ def dashboard(request):
 
     receipts_qs = all_receipts_qs
     bank_qs = all_bank_qs
-    month_start = parse_month(selected_month)
-    if period == 'month' and month_start:
-        month_end = next_month(month_start)
-        receipts_qs = receipts_qs.filter(purchased_at__gte=month_start, purchased_at__lt=month_end)
-        bank_qs = bank_qs.filter(transaction_at__gte=month_start, transaction_at__lt=month_end)
+    if period == 'month':
+        receipts_qs, bank_qs = filter_month_qs(receipts_qs, bank_qs, selected_month)
     else:
         start = rolling_start(period)
         if start:
@@ -303,6 +311,42 @@ def dashboard(request):
         'products': products,
         'stores': stores,
     })
+
+
+@api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
+@permission_classes([permissions.IsAuthenticated])
+def dashboard_subcategory_details(request):
+    selected_month = request.query_params.get('month') or ''
+    subcategory = request.query_params.get('subcategory') or ''
+    all_receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
+    all_bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
+    receipts_qs, bank_qs = filter_month_qs(all_receipts_qs, all_bank_qs, selected_month)
+    receipt_ids = receipts_qs.values_list('id', flat=True)
+
+    items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids, subcategory=subcategory)
+    receipt_rows = items_qs.values('name_normalized', 'name', 'receipt__merchant_name').annotate(spent=Sum('paid_price'), count=Count('id')).order_by('-spent')
+    result = []
+    for row in receipt_rows:
+        result.append({
+            'name': row['name_normalized'] or row['name'] or 'produkt',
+            'merchant': row['receipt__merchant_name'] or '',
+            'spent': decimal_value(row['spent']),
+            'count': row['count'],
+            'source': 'receipt',
+        })
+
+    bank_rows = bank_qs.filter(subcategory=subcategory).values('merchant_name', 'raw_description').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
+    for row in bank_rows:
+        result.append({
+            'name': row['merchant_name'] or row['raw_description'] or 'wydatek',
+            'merchant': row['merchant_name'] or '',
+            'spent': abs(decimal_value(row['spent'])),
+            'count': row['count'],
+            'source': 'bank',
+        })
+
+    return Response({'month': selected_month, 'subcategory': subcategory, 'items': sorted(result, key=lambda item: item['spent'], reverse=True)})
 
 
 @api_view(['GET'])
