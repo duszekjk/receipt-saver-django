@@ -168,7 +168,9 @@ def dashboard(request):
     receipt_ids = receipts_qs.values_list('id', flat=True)
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
 
-    unmatched_bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0, transaction_type='expense', transaction_at__gte=start.date())
+    # Final budget view for mobile: receipt items + unmatched negative bank transactions.
+    # Do not require transaction_type='expense' because old imports may have blank classification.
+    unmatched_bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0, transaction_at__gte=start.date())
     subcategory_qs = items_qs
     unmatched_subcategory_qs = unmatched_bank_qs
     if category_filter:
@@ -184,9 +186,11 @@ def dashboard(request):
     subcategories = merge_rows(receipt_subcategories, bank_subcategories, limit)
 
     products = top_rows(items_qs, 'name_normalized', limit=limit)
-    stores = list(receipts_qs.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')[:limit])
+    receipt_stores = [{'name': row['merchant_name'] or 'Nieznany sklep', 'spent': decimal_value(row['spent']), 'saved': 0.0, 'count': row['count']} for row in receipts_qs.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')[:limit]]
+    bank_stores = bank_top_rows(unmatched_bank_qs, 'merchant_name', limit=limit)
+    stores = merge_rows(receipt_stores, bank_stores, limit)
 
-    receipt_spent = receipts_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+    receipt_spent = items_qs.aggregate(total=Sum('paid_price'))['total'] or Decimal('0.00')
     bank_spent = abs(unmatched_bank_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
     saved = items_qs.aggregate(total=Sum('discount_amount'))['total'] or Decimal('0.00')
     all_categories = sorted(set(list(items_qs.exclude(category='').values_list('category', flat=True).distinct()) + list(unmatched_bank_qs.exclude(category='').values_list('category', flat=True).distinct())))
@@ -194,12 +198,12 @@ def dashboard(request):
     return Response({
         'period': period,
         'category_filter': category_filter,
-        'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count(), 'store_count': receipts_qs.exclude(merchant_name='').values('merchant_name').distinct().count()},
+        'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count(), 'store_count': len(stores)},
         'available_categories': all_categories,
         'categories': categories,
         'subcategories': subcategories,
         'products': products,
-        'stores': [{'name': row['merchant_name'] or 'Nieznany sklep', 'spent': decimal_value(row['spent']), 'saved': 0.0, 'count': row['count']} for row in stores],
+        'stores': stores,
     })
 
 
