@@ -2,7 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from .categories import normalize_category
+from .categories import infer_category_from_name
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
 from .openai_receipts import parse_receipt_image
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
@@ -37,11 +37,12 @@ def create_receipt_from_image(user, image_file) -> Receipt:
     receipt.save()
 
     for item in data.get('items', []):
-        category, subcategory = normalize_category(item.get('category'), item.get('subcategory'))
+        name = item.get('name') or ''
+        category, subcategory = infer_category_from_name(name, item.get('category'), item.get('subcategory'))
         ReceiptItem.objects.create(
             receipt=receipt,
-            name=item.get('name') or '',
-            name_normalized=normalize_text(item.get('name') or ''),
+            name=name,
+            name_normalized=normalize_text(name),
             quantity=item.get('quantity'),
             unit_price=item.get('unit_price'),
             paid_price=item.get('paid_price') or 0,
