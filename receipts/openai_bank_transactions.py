@@ -11,13 +11,14 @@ Jesteś klasyfikatorem polskich transakcji bankowych. Zwracasz wyłącznie popra
 Klasyfikujesz pojedynczy wiersz wyciągu bankowego.
 
 Ważne zasady:
+- Zachowuj polskie znaki w corrected_description, category i subcategory.
 - Jeśli kwota jest dodatnia, to zwykle transaction_type="income".
 - Jeśli kwota jest ujemna, to zwykle transaction_type="expense".
 - Jeśli opis wskazuje przelew między własnymi kontami, Smart Saver, konto oszczędnościowe, konto walutowe albo transfer wewnętrzny, użyj transaction_type="internal_transfer".
 - Jeśli transakcja jest dopasowana do paragonu/faktury, jej kategoria bankowa jest tylko pomocnicza. Raport wydatków ma wtedy używać pozycji paragonu/faktury.
 - Dla transakcji bez paragonu/faktury kategoria bankowa jest właściwą kategorią budżetową.
 - Popraw błędy kodowania znaków, np. KA£UØNY -> KAŁUŻNY, POZNA— -> POZNAŃ, ålπski -> Śląski, ksiÍgowania -> księgowania.
-- category i subcategory muszą być wybrane wyłącznie z listy.
+- category i subcategory muszą być wybrane wyłącznie z listy i zapisane dokładnie tak, jak poniżej.
 - Nie wolno tworzyć własnych kategorii ani podkategorii.
 - merchant_name nie może być kwotą ani fragmentem liczby. Jeśli nie umiesz wskazać kontrahenta, zwróć pusty string.
 
@@ -61,16 +62,16 @@ def fallback_classification(tx):
     text = f'{tx.merchant_name} {tx.raw_description}'.lower()
     if 'smart saver' in text or 'konto oszcz' in text or ('konto direct' in text and tx.user.get_username().lower() in text):
         transaction_type = 'internal_transfer'
-        category, subcategory = 'przelewy_wewnetrzne', 'konto_wlasne'
+        category, subcategory = 'Przelewy wewnętrzne', 'konto własne'
     elif amount > 0:
         transaction_type = 'income'
-        category, subcategory = 'przychody', 'inne'
+        category, subcategory = 'Przychody', 'inne'
     elif amount < 0:
         transaction_type = 'expense'
-        category, subcategory = 'inne', 'inne'
+        category, subcategory = 'Inne', 'inne'
     else:
         transaction_type = 'neutral'
-        category, subcategory = 'inne', 'inne'
+        category, subcategory = 'Inne', 'inne'
     return {
         'corrected_description': tx.raw_description or tx.merchant_name or '',
         'merchant_name': tx.merchant_name or '',
@@ -122,8 +123,6 @@ def apply_bank_transaction_classification(tx):
     original_merchant_name = tx.merchant_name or ''
     data = classify_bank_transaction(tx)
     tx.corrected_description = data.get('corrected_description') or tx.raw_description or original_merchant_name
-    # Bank parser output is the source of truth. OpenAI may classify and clean text,
-    # but it must not overwrite the imported counterparty with accidental amount fragments.
     tx.merchant_name = original_merchant_name
     tx.merchant_normalized = normalize_text(tx.merchant_name)
     tx.transaction_type = data.get('transaction_type') or ''
