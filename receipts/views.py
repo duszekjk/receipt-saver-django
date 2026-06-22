@@ -1,6 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
 from django.utils import timezone
 from rest_framework import authentication, permissions, viewsets
@@ -26,7 +26,7 @@ def visible_receipts(user):
         return Receipt.objects.all()
     family = user_family(user)
     if family:
-        return Receipt.objects.filter(family=family)
+        return Receipt.objects.filter(Q(family=family) | Q(user=user)).distinct()
     return Receipt.objects.filter(user=user)
 
 
@@ -35,7 +35,7 @@ def visible_bank_transactions(user):
         return BankTransaction.objects.all()
     family = user_family(user)
     if family:
-        return BankTransaction.objects.filter(family=family)
+        return BankTransaction.objects.filter(Q(family=family) | Q(user=user)).distinct()
     return BankTransaction.objects.filter(user=user)
 
 
@@ -165,12 +165,8 @@ def dashboard(request):
     except ValueError:
         limit = 10
 
-    start = period_start(period)
     receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
     bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
-    if start is not None:
-        receipts_qs = receipts_qs.filter(purchased_at__gte=start)
-        bank_qs = bank_qs.filter(transaction_at__gte=start.date())
 
     receipt_ids = receipts_qs.values_list('id', flat=True)
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
@@ -202,7 +198,7 @@ def dashboard(request):
     return Response({
         'period': period,
         'category_filter': category_filter,
-        'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count(), 'store_count': len(stores)},
+        'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count() + bank_qs.count(), 'store_count': len(stores)},
         'available_categories': all_categories,
         'categories': categories,
         'subcategories': subcategories,
