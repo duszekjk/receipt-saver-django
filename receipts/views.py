@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
@@ -56,6 +56,14 @@ def period_trunc(period):
     return TruncMonth
 
 
+def normalize_sort_bucket(value):
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value or '')
+
+
 def period_label(value, period):
     if not value:
         return ''
@@ -101,7 +109,7 @@ def build_timeline(period, receipt_items_qs, bank_qs):
     for row in receipt_rows:
         bucket = row['bucket']
         key = period_label(bucket, period)
-        merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': bucket}
+        merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
         merged[key]['spent'] += row['spent'] or Decimal('0.00')
         merged[key]['saved'] += row['saved'] or Decimal('0.00')
         merged[key]['count'] += row['count'] or 0
@@ -109,7 +117,7 @@ def build_timeline(period, receipt_items_qs, bank_qs):
         bucket = row['bucket']
         key = period_label(bucket, period)
         if key not in merged:
-            merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': bucket}
+            merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
         merged[key]['spent'] += abs(row['spent'] or Decimal('0.00'))
         merged[key]['count'] += row['count'] or 0
     rows = sorted(merged.values(), key=lambda item: item['sort'])[-12:]
