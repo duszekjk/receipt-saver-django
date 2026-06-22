@@ -41,6 +41,8 @@ def visible_bank_transactions(user):
 
 def period_start(period):
     now = timezone.now()
+    if period == 'all':
+        return None
     if period == 'year':
         return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     if period == 'halfyear':
@@ -156,7 +158,7 @@ def summaries(request):
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def dashboard(request):
-    period = request.query_params.get('period', 'month')
+    period = request.query_params.get('period', 'all')
     category_filter = request.query_params.get('category', '')
     try:
         limit = max(3, min(30, int(request.query_params.get('limit', 10))))
@@ -164,21 +166,23 @@ def dashboard(request):
         limit = 10
 
     start = period_start(period)
-    receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True, purchased_at__gte=start)
+    receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
+    bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
+    if start is not None:
+        receipts_qs = receipts_qs.filter(purchased_at__gte=start)
+        bank_qs = bank_qs.filter(transaction_at__gte=start.date())
+
     receipt_ids = receipts_qs.values_list('id', flat=True)
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
 
-    # Final budget view for mobile: receipt items + unmatched negative bank transactions.
-    # Do not require transaction_type='expense' because old imports may have blank classification.
-    unmatched_bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0, transaction_at__gte=start.date())
     subcategory_qs = items_qs
-    unmatched_subcategory_qs = unmatched_bank_qs
+    unmatched_subcategory_qs = bank_qs
     if category_filter:
         subcategory_qs = subcategory_qs.filter(category=category_filter)
         unmatched_subcategory_qs = unmatched_subcategory_qs.filter(category=category_filter)
 
     receipt_categories = top_rows(items_qs, 'category', limit=limit)
-    bank_categories = bank_top_rows(unmatched_bank_qs, 'category', limit=limit)
+    bank_categories = bank_top_rows(bank_qs, 'category', limit=limit)
     categories = merge_rows(receipt_categories, bank_categories, limit)
 
     receipt_subcategories = top_rows(subcategory_qs, 'subcategory', limit=limit)
@@ -187,13 +191,13 @@ def dashboard(request):
 
     products = top_rows(items_qs, 'name_normalized', limit=limit)
     receipt_stores = [{'name': row['merchant_name'] or 'Nieznany sklep', 'spent': decimal_value(row['spent']), 'saved': 0.0, 'count': row['count']} for row in receipts_qs.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')[:limit]]
-    bank_stores = bank_top_rows(unmatched_bank_qs, 'merchant_name', limit=limit)
+    bank_stores = bank_top_rows(bank_qs, 'merchant_name', limit=limit)
     stores = merge_rows(receipt_stores, bank_stores, limit)
 
     receipt_spent = items_qs.aggregate(total=Sum('paid_price'))['total'] or Decimal('0.00')
-    bank_spent = abs(unmatched_bank_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
+    bank_spent = abs(bank_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
     saved = items_qs.aggregate(total=Sum('discount_amount'))['total'] or Decimal('0.00')
-    all_categories = sorted(set(list(items_qs.exclude(category='').values_list('category', flat=True).distinct()) + list(unmatched_bank_qs.exclude(category='').values_list('category', flat=True).distinct())))
+    all_categories = sorted(set(list(items_qs.exclude(category='').values_list('category', flat=True).distinct()) + list(bank_qs.exclude(category='').values_list('category', flat=True).distinct())))
 
     return Response({
         'period': period,
