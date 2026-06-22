@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.contrib import admin, messages
 from django.db.models import Count, Sum
@@ -68,6 +68,14 @@ def period_trunc(period):
     return TruncMonth
 
 
+def normalize_sort_bucket(value):
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value or '')
+
+
 def period_label(value, period):
     if not value:
         return ''
@@ -124,15 +132,17 @@ def build_period_rows(period, receipt_items, standalone_expenses):
     bank_rows = standalone_expenses.filter(transaction_at__isnull=False).annotate(bucket=trunc('transaction_at')).values('bucket').annotate(spent=Sum('amount'), count=Count('id'))
     merged = {}
     for row in receipt_rows:
-        key = period_label(row['bucket'], period)
-        merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': row['bucket']}
+        bucket = row['bucket']
+        key = period_label(bucket, period)
+        merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
         merged[key]['spent'] += money(row['spent'])
         merged[key]['saved'] += money(row['saved'])
         merged[key]['count'] += row['count'] or 0
     for row in bank_rows:
-        key = period_label(row['bucket'], period)
+        bucket = row['bucket']
+        key = period_label(bucket, period)
         if key not in merged:
-            merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': row['bucket']}
+            merged[key] = {'period_label': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': normalize_sort_bucket(bucket)}
         merged[key]['spent'] += abs(money(row['spent']))
         merged[key]['count'] += row['count'] or 0
     rows = sorted(merged.values(), key=lambda item: item['sort'])[-12:]
