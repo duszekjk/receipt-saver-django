@@ -39,19 +39,32 @@ def visible_bank_transactions(user):
     return BankTransaction.objects.filter(user=user)
 
 
-def period_start(period):
+def rolling_start(period):
     now = timezone.now()
-    if period == 'all':
-        return None
-    if period == 'year':
-        return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    if period == 'halfyear':
-        month = 1 if now.month <= 6 else 7
-        return now.replace(month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period == 'last30':
+        return now - timedelta(days=30)
+    if period == 'last90':
+        return now - timedelta(days=90)
+    return None
+
+
+def period_trunc(period):
     if period == 'quarter':
-        month = ((now.month - 1) // 3) * 3 + 1
-        return now.replace(month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return TruncQuarter
+    if period == 'year':
+        return TruncYear
+    return TruncMonth
+
+
+def period_label(value, period):
+    if not value:
+        return ''
+    if period == 'quarter':
+        quarter = ((value.month - 1) // 3) + 1
+        return f'{value.year} Q{quarter}'
+    if period == 'year':
+        return f'{value.year}'
+    return value.strftime('%Y-%m')
 
 
 def decimal_value(value):
@@ -78,6 +91,29 @@ def merge_rows(primary, fallback, limit):
         merged[name]['saved'] += row.get('saved') or 0.0
         merged[name]['count'] += row.get('count') or 0
     return sorted(merged.values(), key=lambda item: item['spent'], reverse=True)[:limit]
+
+
+def build_timeline(period, receipt_items_qs, bank_qs):
+    trunc = period_trunc(period)
+    receipt_rows = receipt_items_qs.filter(receipt__purchased_at__isnull=False).annotate(bucket=trunc('receipt__purchased_at')).values('bucket').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id'))
+    bank_rows = bank_qs.filter(transaction_at__isnull=False).annotate(bucket=trunc('transaction_at')).values('bucket').annotate(spent=Sum('amount'), count=Count('id'))
+    merged = {}
+    for row in receipt_rows:
+        bucket = row['bucket']
+        key = period_label(bucket, period)
+        merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': bucket}
+        merged[key]['spent'] += row['spent'] or Decimal('0.00')
+        merged[key]['saved'] += row['saved'] or Decimal('0.00')
+        merged[key]['count'] += row['count'] or 0
+    for row in bank_rows:
+        bucket = row['bucket']
+        key = period_label(bucket, period)
+        if key not in merged:
+            merged[key] = {'name': key, 'spent': Decimal('0.00'), 'saved': Decimal('0.00'), 'count': 0, 'sort': bucket}
+        merged[key]['spent'] += abs(row['spent'] or Decimal('0.00'))
+        merged[key]['count'] += row['count'] or 0
+    rows = sorted(merged.values(), key=lambda item: item['sort'])[-12:]
+    return [{'name': row['name'], 'spent': decimal_value(row['spent']), 'saved': decimal_value(row['saved']), 'count': row['count']} for row in rows]
 
 
 class ReceiptViewSet(viewsets.ReadOnlyModelViewSet):
@@ -140,17 +176,14 @@ def import_bank_statement(request):
 def summaries(request):
     period = request.query_params.get('period', 'month')
     scope = request.query_params.get('scope', 'family')
-    trunc = {'month': TruncMonth, 'quarter': TruncQuarter, 'halfyear': TruncQuarter, 'year': TruncYear}.get(period, TruncMonth)
+    trunc = period_trunc(period)
     qs = visible_receipts(request.user).filter(duplicate_of__isnull=True, purchased_at__isnull=False)
     if scope == 'user':
         qs = qs.filter(user=request.user)
     rows = qs.annotate(period=trunc('purchased_at')).values('period', 'user_id').annotate(spent=Sum('total_amount'), saved=Sum('items__discount_amount')).order_by('-period')
     result = []
     for row in rows:
-        item = {'period': row['period'], 'user_id': row['user_id'], 'spent': decimal_value(row['spent']), 'saved': decimal_value(row['saved'])}
-        if period == 'halfyear' and row['period']:
-            item['halfyear'] = 1 if row['period'].month <= 6 else 2
-        result.append(item)
+        result.append({'period': period_label(row['period'], period), 'user_id': row['user_id'], 'spent': decimal_value(row['spent']), 'saved': decimal_value(row['saved'])})
     return Response(result)
 
 
@@ -158,7 +191,7 @@ def summaries(request):
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def dashboard(request):
-    period = request.query_params.get('period', 'all')
+    period = request.query_params.get('period', 'month')
     category_filter = request.query_params.get('category', '')
     try:
         limit = max(3, min(30, int(request.query_params.get('limit', 10))))
@@ -167,6 +200,10 @@ def dashboard(request):
 
     receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
     bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
+    start = rolling_start(period)
+    if start:
+        receipts_qs = receipts_qs.filter(purchased_at__gte=start)
+        bank_qs = bank_qs.filter(transaction_at__gte=start.date())
 
     receipt_ids = receipts_qs.values_list('id', flat=True)
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
@@ -194,12 +231,14 @@ def dashboard(request):
     bank_spent = abs(bank_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
     saved = items_qs.aggregate(total=Sum('discount_amount'))['total'] or Decimal('0.00')
     all_categories = sorted(set(list(items_qs.exclude(category='').values_list('category', flat=True).distinct()) + list(bank_qs.exclude(category='').values_list('category', flat=True).distinct())))
+    timeline = build_timeline(period, items_qs, bank_qs)
 
     return Response({
         'period': period,
         'category_filter': category_filter,
         'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count() + bank_qs.count(), 'store_count': len(stores)},
         'available_categories': all_categories,
+        'timeline': timeline,
         'categories': categories,
         'subcategories': subcategories,
         'products': products,
