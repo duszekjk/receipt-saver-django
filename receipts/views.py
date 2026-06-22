@@ -75,6 +75,44 @@ def period_label(value, period):
     return value.strftime('%Y-%m')
 
 
+def parse_month(value):
+    try:
+        return datetime.strptime(value or '', '%Y-%m').date().replace(day=1)
+    except ValueError:
+        return None
+
+
+def next_month(value):
+    if value.month == 12:
+        return value.replace(year=value.year + 1, month=1, day=1)
+    return value.replace(month=value.month + 1, day=1)
+
+
+def month_key(value):
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime('%Y-%m')
+    return ''
+
+
+def available_months_for(receipts_qs, bank_qs):
+    receipt_months = receipts_qs.filter(purchased_at__isnull=False).annotate(month=TruncMonth('purchased_at')).values_list('month', flat=True).distinct()
+    bank_months = bank_qs.filter(transaction_at__isnull=False).annotate(month=TruncMonth('transaction_at')).values_list('month', flat=True).distinct()
+    months = sorted({month_key(value) for value in list(receipt_months) + list(bank_months) if value}, reverse=True)
+    return months
+
+
+def default_month(months):
+    if not months:
+        now = timezone.localdate()
+        previous = now.replace(day=1) - timedelta(days=1)
+        return previous.strftime('%Y-%m')
+    now_key = timezone.localdate().strftime('%Y-%m')
+    older = [month for month in months if month < now_key]
+    return older[0] if older else months[0]
+
+
 def decimal_value(value):
     return float(value or Decimal('0.00'))
 
@@ -206,12 +244,23 @@ def dashboard(request):
     except ValueError:
         limit = 10
 
-    receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
-    bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
-    start = rolling_start(period)
-    if start:
-        receipts_qs = receipts_qs.filter(purchased_at__gte=start)
-        bank_qs = bank_qs.filter(transaction_at__gte=start.date())
+    all_receipts_qs = visible_receipts(request.user).filter(duplicate_of__isnull=True)
+    all_bank_qs = visible_bank_transactions(request.user).filter(matched_receipt__isnull=True, amount__lt=0)
+    months = available_months_for(all_receipts_qs, all_bank_qs)
+    selected_month = request.query_params.get('month') or default_month(months)
+
+    receipts_qs = all_receipts_qs
+    bank_qs = all_bank_qs
+    month_start = parse_month(selected_month)
+    if period == 'month' and month_start:
+        month_end = next_month(month_start)
+        receipts_qs = receipts_qs.filter(purchased_at__gte=month_start, purchased_at__lt=month_end)
+        bank_qs = bank_qs.filter(transaction_at__gte=month_start, transaction_at__lt=month_end)
+    else:
+        start = rolling_start(period)
+        if start:
+            receipts_qs = receipts_qs.filter(purchased_at__gte=start)
+            bank_qs = bank_qs.filter(transaction_at__gte=start.date())
 
     receipt_ids = receipts_qs.values_list('id', flat=True)
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
@@ -239,10 +288,12 @@ def dashboard(request):
     bank_spent = abs(bank_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'))
     saved = items_qs.aggregate(total=Sum('discount_amount'))['total'] or Decimal('0.00')
     all_categories = sorted(set(list(items_qs.exclude(category='').values_list('category', flat=True).distinct()) + list(bank_qs.exclude(category='').values_list('category', flat=True).distinct())))
-    timeline = build_timeline(period, items_qs, bank_qs)
+    timeline = build_timeline(period, ReceiptItem.objects.filter(receipt_id__in=all_receipts_qs.values_list('id', flat=True)), all_bank_qs)
 
     return Response({
         'period': period,
+        'selected_month': selected_month,
+        'available_months': months,
         'category_filter': category_filter,
         'cards': {'spent': decimal_value(receipt_spent + bank_spent), 'saved': decimal_value(saved), 'receipt_count': receipts_qs.count() + bank_qs.count(), 'store_count': len(stores)},
         'available_categories': all_categories,
