@@ -1,9 +1,21 @@
 import unicodedata
 
 RECEIPT_CATEGORIES = {
-    'Żywność': ['owoce', 'warzywa', 'pieczywo', 'nabiał', 'sery', 'jogurty', 'mięso', 'wędliny', 'ryby', 'mrożonki', 'słodycze', 'napoje', 'woda', 'soki', 'kawa', 'herbata', 'przyprawy', 'miód', 'gotowe dania', 'inne'],
-    'Zdrowie': ['lekarz', 'dentysta', 'okulista', 'rehabilitacja', 'apteka', 'leki', 'suplementy', 'sprzęt medyczny', 'badania', 'inne'],
-    'Dom': ['chemia domowa', 'środki czystości', 'papier toaletowy', 'ręczniki papierowe', 'pranie', 'kuchnia', 'remont', 'narzędzia', 'ogród', 'kwiaty', 'dekoracje', 'inne'],
+    'Żywność': [
+        'owoce', 'warzywa', 'pieczywo', 'nabiał', 'jaja', 'sery', 'jogurty', 'masło',
+        'mięso', 'wędliny', 'ryby', 'mrożonki', 'produkty sypkie', 'makarony i kasze',
+        'dodatki do pieczenia', 'przyprawy', 'słodycze', 'miód', 'dżemy i kremy',
+        'napoje', 'woda', 'soki', 'kawa', 'herbata', 'gotowe dania', 'konserwy',
+        'sosy i dodatki', 'inne'
+    ],
+    'Zdrowie': [
+        'lekarz', 'dentysta', 'okulista', 'rehabilitacja', 'apteka', 'leki',
+        'suplementy', 'sprzęt medyczny', 'badania', 'inne'
+    ],
+    'Dom': [
+        'chemia domowa', 'środki czystości', 'papier toaletowy', 'ręczniki papierowe',
+        'pranie', 'kuchnia', 'remont', 'narzędzia', 'ogród', 'kwiaty', 'dekoracje', 'inne'
+    ],
     'Higiena': ['kosmetyki', 'higiena osobista', 'fryzjer', 'inne'],
     'Transport': ['paliwo', 'parking', 'komunikacja miejska', 'taxi', 'serwis samochodu', 'inne'],
     'Mieszkanie': ['prąd', 'gaz', 'woda', 'internet', 'telefon', 'czynsz', 'ogrzewanie', 'śmieci', 'inne'],
@@ -35,23 +47,20 @@ def ascii_key(value):
     return ' '.join(value.split())
 
 
-def _alias_map(categories):
+def _category_lookup(categories):
     result = {}
-    for category, subcategories in categories.items():
+    for category in categories.keys():
         result[ascii_key(category)] = category
         result[category.strip().lower()] = category
-        for subcategory in subcategories:
-            result[ascii_key(subcategory)] = subcategory
-            result[subcategory.strip().lower()] = subcategory
     return result
 
 
-def _category_lookup(categories):
-    return {ascii_key(category): category for category in categories.keys()} | {category.strip().lower(): category for category in categories.keys()}
-
-
 def _subcategory_lookup(categories, category):
-    return {ascii_key(sub): sub for sub in categories[category]} | {sub.strip().lower(): sub for sub in categories[category]}
+    result = {}
+    for subcategory in categories[category]:
+        result[ascii_key(subcategory)] = subcategory
+        result[subcategory.strip().lower()] = subcategory
+    return result
 
 
 def normalize_category(category, subcategory):
@@ -66,44 +75,20 @@ def normalize_from_categories(category, subcategory, categories):
     category_lookup = _category_lookup(categories)
     canonical_category = category_lookup.get(ascii_key(category)) or category_lookup.get((category or '').strip().lower())
     if not canonical_category:
-        return 'Inne', 'inne'
+        raise ValueError(f'Niepoprawna kategoria: {category!r}')
     sub_lookup = _subcategory_lookup(categories, canonical_category)
     canonical_subcategory = sub_lookup.get(ascii_key(subcategory)) or sub_lookup.get((subcategory or '').strip().lower())
     if not canonical_subcategory:
-        return canonical_category, 'inne'
+        raise ValueError(f'Niepoprawna podkategoria dla {canonical_category}: {subcategory!r}')
     return canonical_category, canonical_subcategory
 
 
-def infer_category_from_name(name, category=None, subcategory=None):
-    category, subcategory = normalize_category(category, subcategory)
-    if category != 'Inne' or subcategory != 'inne':
-        return category, subcategory
-
-    text = f' {ascii_key(name)} '
-    rules = [
-        (['miod', 'miod ', 'miod wielokwiatowy'], 'Żywność', 'miód'),
-        (['roza', 'roze', 'bukiet', 'kwiat', 'kwiaty'], 'Dom', 'kwiaty'),
-        (['chleb', 'bulka', 'kajzerka', 'bagietka'], 'Żywność', 'pieczywo'),
-        (['maslo', 'mleko', 'jogurt', 'ser ', 'twarog', 'smietana'], 'Żywność', 'nabiał'),
-        (['jablko', 'banan', 'gruszka', 'truskawka', 'borowka', 'malina'], 'Żywność', 'owoce'),
-        (['pomidor', 'ogorek', 'cebula', 'ziemniak', 'marchew', 'salata'], 'Żywność', 'warzywa'),
-        (['kurczak', 'wolowina', 'wieprz', 'mieso'], 'Żywność', 'mięso'),
-        (['szynka', 'kielbasa', 'parowki', 'wedlina'], 'Żywność', 'wędliny'),
-        (['czekolada', 'ciastka', 'cukierki', 'lody'], 'Żywność', 'słodycze'),
-        (['woda', 'sok', 'cola', 'napoj'], 'Żywność', 'napoje'),
-        (['kawa', 'herbata'], 'Żywność', 'kawa'),
-        (['piwo'], 'Alkohol', 'piwo'),
-        (['wino'], 'Alkohol', 'wino'),
-        (['wodka', 'whisky', 'rum', 'gin'], 'Alkohol', 'mocny alkohol'),
-        (['paliwo', 'benzyna', 'diesel', 'pb95', 'pb 95', 'orlen', 'shell', 'bp '], 'Transport', 'paliwo'),
-        (['papier toaletowy', 'recznik papierowy'], 'Dom', 'papier toaletowy'),
-        (['proszek', 'plyn do prania', 'domestos', 'ludwik'], 'Dom', 'środki czystości'),
-        (['szampon', 'mydlo', 'pasta do zebow', 'dezodorant'], 'Higiena', 'higiena osobista'),
-    ]
-    for needles, mapped_category, mapped_subcategory in rules:
-        if any(f' {needle} ' in text or text.strip() == needle for needle in needles):
-            return mapped_category, mapped_subcategory
-    return category, subcategory
+def category_is_valid(category, subcategory):
+    try:
+        normalize_category(category, subcategory)
+        return True
+    except ValueError:
+        return False
 
 
 def allowed_categories_prompt_text():
