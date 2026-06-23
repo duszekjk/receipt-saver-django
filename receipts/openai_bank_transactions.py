@@ -19,6 +19,7 @@ Zasady:
 - Przelew wewnętrzny nie jest wydatkiem ani przychodem budżetowym.
 - category i subcategory muszą pochodzić dokładnie z poniższej listy.
 - Nie używaj Inne/inne.
+- Nie używaj ogólnych kategorii spoza listy, np. Zakupy. Wybierz najbliższą konkretną kategorię z listy.
 
 Dozwolone kategorie:
 {allowed_bank_categories_prompt_text()}
@@ -60,7 +61,7 @@ def looks_like_internal_transfer(tx):
         'transfer wewnetrzny', 'internal transfer', 'own account', 'between your accounts',
         'to your revolut', 'from your revolut', 'revolut top up', 'top up by bank card',
         'card top up', 'bank transfer to revolut', 'bank transfer from revolut',
-        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kałużny jacek', 'kaluzny jacek',
+        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kaluzny jacek',
         'apple pay deposit', 'deposit by', 'depositing savings', 'to pocket', 'from pocket', 'pocket pln',
         'exchanged to', 'exchanged from', 'exchange current', 'wymiana walut', 'credit card repayment'
     ]
@@ -107,16 +108,15 @@ def fallback_classification(tx):
     }
 
 
-def classify_bank_transaction(tx):
-    if looks_like_internal_transfer(tx):
-        return fallback_classification(tx)
-    if not getattr(settings, 'OPENAI_KEY', ''):
-        return fallback_classification(tx)
+def _classify_with_openai(tx, retry_error=None):
     client = OpenAI(api_key=settings.OPENAI_KEY)
     payload = {'bank': tx.bank, 'booked_at': str(tx.booked_at or ''), 'transaction_at': str(tx.transaction_at or ''), 'merchant_name': tx.merchant_name, 'raw_description': tx.raw_description, 'amount': str(tx.amount), 'currency': tx.currency, 'raw_row': tx.raw_row}
+    user_text = 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(payload, ensure_ascii=False)
+    if retry_error:
+        user_text += '\n\nPoprzednia odpowiedź była niepoprawna: ' + str(retry_error) + '\nPopraw JSON. Category i subcategory muszą być dokładnie z listy. Nie używaj kategorii Zakupy, Inne ani innych spoza listy.'
     response = client.chat.completions.create(
         model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'),
-        messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(payload, ensure_ascii=False)}],
+        messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': user_text}],
         response_format={'type': 'json_schema', 'json_schema': JSON_SCHEMA},
         temperature=0,
     )
@@ -124,12 +124,29 @@ def classify_bank_transaction(tx):
     category, subcategory = normalize_bank_category(data.get('category'), data.get('subcategory'))
     data['category'] = category
     data['subcategory'] = subcategory
-    if data.get('transaction_type') not in ['expense', 'income', 'internal_transfer', 'neutral']:
-        data['transaction_type'] = fallback_classification(tx)['transaction_type']
-    data['corrected_description'] = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
-    if looks_like_amount_fragment(data.get('merchant_name')):
-        data['merchant_name'] = tx.merchant_name or ''
     return data
+
+
+def classify_bank_transaction(tx):
+    if looks_like_internal_transfer(tx):
+        return fallback_classification(tx)
+    if not getattr(settings, 'OPENAI_KEY', ''):
+        return fallback_classification(tx)
+    last_error = None
+    for _ in range(2):
+        try:
+            data = _classify_with_openai(tx, retry_error=last_error)
+            if data.get('transaction_type') not in ['expense', 'income', 'internal_transfer', 'neutral']:
+                data['transaction_type'] = fallback_classification(tx)['transaction_type']
+            data['corrected_description'] = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
+            if looks_like_amount_fragment(data.get('merchant_name')):
+                data['merchant_name'] = tx.merchant_name or ''
+            return data
+        except (ValueError, json.JSONDecodeError) as error:
+            last_error = error
+    fallback = fallback_classification(tx)
+    fallback['notes'] = 'fallback_after_invalid_openai_category: ' + str(last_error)
+    return fallback
 
 
 def apply_bank_transaction_classification(tx):
@@ -141,7 +158,7 @@ def apply_bank_transaction_classification(tx):
     tx.transaction_type = data.get('transaction_type') or ''
     tx.category = data.get('category') or ''
     tx.subcategory = data.get('subcategory') or ''
-    tx.classification_source = 'openai' if data.get('notes') != 'fallback' else 'fallback'
+    tx.classification_source = 'openai' if not str(data.get('notes', '')).startswith('fallback') else 'fallback'
     tx.raw_classification_json = data
     tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
     return tx
