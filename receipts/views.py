@@ -91,14 +91,24 @@ def next_month(value):
     return value.replace(month=value.month + 1, day=1)
 
 
+def aware_month_bounds(selected_month):
+    month_start_date = parse_month(selected_month)
+    if not month_start_date:
+        return None, None, None, None
+    month_end_date = next_month(month_start_date)
+    tz = timezone.get_current_timezone()
+    month_start_dt = timezone.make_aware(datetime.combine(month_start_date, datetime.min.time()), tz)
+    month_end_dt = timezone.make_aware(datetime.combine(month_end_date, datetime.min.time()), tz)
+    return month_start_date, month_end_date, month_start_dt, month_end_dt
+
+
 def filter_month_qs(receipts_qs, bank_qs, selected_month):
-    month_start = parse_month(selected_month)
-    if not month_start:
+    month_start_date, month_end_date, month_start_dt, month_end_dt = aware_month_bounds(selected_month)
+    if not month_start_date:
         return receipts_qs.none(), bank_qs.none()
-    month_end = next_month(month_start)
     return (
-        receipts_qs.filter(purchased_at__gte=month_start, purchased_at__lt=month_end),
-        bank_qs.filter(transaction_at__gte=month_start, transaction_at__lt=month_end),
+        receipts_qs.filter(purchased_at__gte=month_start_dt, purchased_at__lt=month_end_dt),
+        bank_qs.filter(transaction_at__gte=month_start_date, transaction_at__lt=month_end_date),
     )
 
 
@@ -290,7 +300,7 @@ def dashboard(request):
     bank_subcategories = bank_top_rows(unmatched_subcategory_qs, 'subcategory', limit=limit)
     subcategories = merge_rows(receipt_subcategories, bank_subcategories, limit)
 
-    products = top_rows(items_qs, 'name_normalized', limit=limit)
+    products = top_rows(items_qs, 'name', limit=limit)
     receipt_stores = [{'name': row['merchant_name'] or 'Nieznany sklep', 'spent': decimal_value(row['spent']), 'saved': 0.0, 'count': row['count']} for row in receipts_qs.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')[:limit]]
     bank_stores = bank_top_rows(bank_qs, 'merchant_name', limit=limit)
     stores = merge_rows(receipt_stores, bank_stores, limit)
@@ -328,11 +338,11 @@ def dashboard_subcategory_details(request):
     receipt_ids = receipts_qs.values_list('id', flat=True)
 
     items_qs = ReceiptItem.objects.filter(receipt_id__in=receipt_ids, subcategory=subcategory)
-    receipt_rows = items_qs.values('name_normalized', 'name', 'receipt__merchant_name').annotate(spent=Sum('paid_price'), count=Count('id')).order_by('-spent')
+    receipt_rows = items_qs.values('name', 'receipt__merchant_name').annotate(spent=Sum('paid_price'), count=Count('id')).order_by('-spent')
     result = []
     for row in receipt_rows:
         result.append({
-            'name': row['name_normalized'] or row['name'] or 'produkt',
+            'name': row['name'] or 'produkt',
             'merchant': row['receipt__merchant_name'] or '',
             'spent': decimal_value(row['spent']),
             'count': row['count'],
