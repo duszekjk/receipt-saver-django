@@ -5,6 +5,7 @@ class BankStatementImportForm(forms.Form):
     BANK_CHOICES = [
         ('ing', 'ING'),
         ('santander', 'Santander'),
+        ('revolut', 'Revolut'),
     ]
 
     bank = forms.ChoiceField(label='Bank', choices=BANK_CHOICES)
