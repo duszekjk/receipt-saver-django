@@ -11,6 +11,7 @@ urlpatterns = [
     path('dashboard/subcategory/', dashboard_subcategory_details),
     path('receipts/scan/', scan_receipt),
     path('bank/statement/', import_bank_statement),
+    path('bank/import/', import_bank_statement),
     path('summaries/', summaries),
     path('matches/review/', match_candidates),
     path('', include(router.urls)),
