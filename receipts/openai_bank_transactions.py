@@ -10,18 +10,15 @@ SYSTEM_PROMPT = f'''
 Jesteś klasyfikatorem polskich transakcji bankowych. Zwracasz wyłącznie poprawny JSON.
 Klasyfikujesz pojedynczy wiersz wyciągu bankowego.
 
-Ważne zasady:
-- Zachowuj polskie znaki w corrected_description, category i subcategory.
-- Jeśli kwota jest dodatnia, to zwykle transaction_type="income".
-- Jeśli kwota jest ujemna, to zwykle transaction_type="expense".
-- Jeśli opis wskazuje przelew między własnymi kontami, Smart Saver, konto oszczędnościowe, konto walutowe, zasilenie Revolut, wypłatę z Revolut, transfer bankowy między kontami tej samej osoby albo dowolny transfer wewnętrzny, użyj transaction_type="internal_transfer".
-- Przelew wewnętrzny nie jest wydatkiem ani przychodem budżetowym. Ma być wyłączony z podsumowań.
-- Jeśli transakcja jest dopasowana do paragonu/faktury, jej kategoria bankowa jest tylko pomocnicza. Raport wydatków ma wtedy używać pozycji paragonu/faktury.
-- Dla transakcji bez paragonu/faktury kategoria bankowa jest właściwą kategorią budżetową.
-- Popraw błędy kodowania znaków, np. KA£UØNY -> KAŁUŻNY, POZNA— -> POZNAŃ, ålπski -> Śląski, ksiÍgowania -> księgowania.
-- category i subcategory muszą być wybrane wyłącznie z listy i zapisane dokładnie tak, jak poniżej.
-- Nie wolno tworzyć własnych kategorii ani podkategorii.
-- merchant_name nie może być kwotą ani fragmentem liczby. Jeśli nie umiesz wskazać kontrahenta, zwróć pusty string.
+Zasady:
+- Zachowuj polskie znaki.
+- Kwota dodatnia to zwykle income, kwota ujemna to zwykle expense.
+- Przelewy między własnymi kontami, zasilenia Revolut, pocket/kieszeń Revolut, oszczędności, spłaty własnej karty oraz wymiany walut oznaczaj jako internal_transfer.
+- Revolut Exchange oraz opisy Exchanged to / Exchanged from to internal_transfer, nie wydatek.
+- Zwroty od sprzedawców oznaczaj jako neutral z kategorią Promocje i korekty / zwrot.
+- Przelew wewnętrzny nie jest wydatkiem ani przychodem budżetowym.
+- category i subcategory muszą pochodzić dokładnie z poniższej listy.
+- Nie używaj Inne/inne.
 
 Dozwolone kategorie:
 {allowed_bank_categories_prompt_text()}
@@ -53,9 +50,7 @@ def looks_like_amount_fragment(value):
         return True
     if len(value) <= 4 and re.fullmatch(r'-?[0-9,.]+', value):
         return True
-    if re.fullmatch(r'-?[0-9,.]+\s*(pln|eur|usd)?', value.lower()):
-        return True
-    return False
+    return bool(re.fullmatch(r'-?[0-9,.]+\s*(pln|eur|usd)?', value.lower()))
 
 
 def looks_like_internal_transfer(tx):
@@ -65,27 +60,42 @@ def looks_like_internal_transfer(tx):
         'transfer wewnetrzny', 'internal transfer', 'own account', 'between your accounts',
         'to your revolut', 'from your revolut', 'revolut top up', 'top up by bank card',
         'card top up', 'bank transfer to revolut', 'bank transfer from revolut',
-        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kałużny jacek', 'kaluzny jacek'
+        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kałużny jacek', 'kaluzny jacek',
+        'apple pay deposit', 'deposit by', 'depositing savings', 'to pocket', 'from pocket', 'pocket pln',
+        'exchanged to', 'exchanged from', 'exchange current', 'wymiana walut', 'credit card repayment'
     ]
-    if any(pattern in text for pattern in patterns):
-        return True
-    return False
+    return any(pattern in text for pattern in patterns)
+
+
+def internal_subcategory(tx):
+    text = normalize_text(f'{tx.bank} {tx.merchant_name} {tx.raw_description} {tx.raw_row}')
+    if 'exchanged' in text or 'exchange' in text or 'wymiana walut' in text:
+        return 'wymiana walut'
+    if 'pocket' in text or 'kieszen' in text:
+        return 'kieszeń Revolut'
+    if 'saving' in text or 'oszcz' in text:
+        return 'oszczędności'
+    if 'credit card repayment' in text or 'karta kredytowa' in text:
+        return 'karta kredytowa'
+    if 'revolut' in text or 'apple pay deposit' in text or 'deposit by' in text:
+        return 'Revolut'
+    return 'konto własne'
 
 
 def fallback_classification(tx):
     amount = tx.amount
     if looks_like_internal_transfer(tx):
         transaction_type = 'internal_transfer'
-        category, subcategory = 'Przelewy wewnętrzne', 'konto własne'
+        category, subcategory = 'Przelewy wewnętrzne', internal_subcategory(tx)
     elif amount > 0:
         transaction_type = 'income'
-        category, subcategory = 'Przychody', 'inne'
+        category, subcategory = 'Przychody', 'pozostałe przychody'
     elif amount < 0:
         transaction_type = 'expense'
-        category, subcategory = 'Inne', 'inne'
+        category, subcategory = 'Nieczytelne pozycje', 'produkt niejednoznaczny'
     else:
         transaction_type = 'neutral'
-        category, subcategory = 'Inne', 'inne'
+        category, subcategory = 'Promocje i korekty', 'korekta ceny'
     return {
         'corrected_description': tx.raw_description or tx.merchant_name or '',
         'merchant_name': tx.merchant_name or '',
@@ -102,24 +112,11 @@ def classify_bank_transaction(tx):
         return fallback_classification(tx)
     if not getattr(settings, 'OPENAI_KEY', ''):
         return fallback_classification(tx)
-
     client = OpenAI(api_key=settings.OPENAI_KEY)
-    payload = {
-        'bank': tx.bank,
-        'booked_at': str(tx.booked_at or ''),
-        'transaction_at': str(tx.transaction_at or ''),
-        'merchant_name': tx.merchant_name,
-        'raw_description': tx.raw_description,
-        'amount': str(tx.amount),
-        'currency': tx.currency,
-        'raw_row': tx.raw_row,
-    }
+    payload = {'bank': tx.bank, 'booked_at': str(tx.booked_at or ''), 'transaction_at': str(tx.transaction_at or ''), 'merchant_name': tx.merchant_name, 'raw_description': tx.raw_description, 'amount': str(tx.amount), 'currency': tx.currency, 'raw_row': tx.raw_row}
     response = client.chat.completions.create(
         model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'),
-        messages=[
-            {'role': 'system', 'content': SYSTEM_PROMPT},
-            {'role': 'user', 'content': 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(payload, ensure_ascii=False)},
-        ],
+        messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(payload, ensure_ascii=False)}],
         response_format={'type': 'json_schema', 'json_schema': JSON_SCHEMA},
         temperature=0,
     )
