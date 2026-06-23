@@ -14,7 +14,8 @@ Ważne zasady:
 - Zachowuj polskie znaki w corrected_description, category i subcategory.
 - Jeśli kwota jest dodatnia, to zwykle transaction_type="income".
 - Jeśli kwota jest ujemna, to zwykle transaction_type="expense".
-- Jeśli opis wskazuje przelew między własnymi kontami, Smart Saver, konto oszczędnościowe, konto walutowe albo transfer wewnętrzny, użyj transaction_type="internal_transfer".
+- Jeśli opis wskazuje przelew między własnymi kontami, Smart Saver, konto oszczędnościowe, konto walutowe, zasilenie Revolut, wypłatę z Revolut, transfer bankowy między kontami tej samej osoby albo dowolny transfer wewnętrzny, użyj transaction_type="internal_transfer".
+- Przelew wewnętrzny nie jest wydatkiem ani przychodem budżetowym. Ma być wyłączony z podsumowań.
 - Jeśli transakcja jest dopasowana do paragonu/faktury, jej kategoria bankowa jest tylko pomocnicza. Raport wydatków ma wtedy używać pozycji paragonu/faktury.
 - Dla transakcji bez paragonu/faktury kategoria bankowa jest właściwą kategorią budżetową.
 - Popraw błędy kodowania znaków, np. KA£UØNY -> KAŁUŻNY, POZNA— -> POZNAŃ, ålπski -> Śląski, ksiÍgowania -> księgowania.
@@ -57,10 +58,23 @@ def looks_like_amount_fragment(value):
     return False
 
 
+def looks_like_internal_transfer(tx):
+    text = normalize_text(f'{tx.bank} {tx.merchant_name} {tx.raw_description} {tx.raw_row}')
+    patterns = [
+        'smart saver', 'konto oszcz', 'konto wlasne', 'wlasny rachunek', 'przelew wlasny',
+        'transfer wewnetrzny', 'internal transfer', 'own account', 'between your accounts',
+        'to your revolut', 'from your revolut', 'revolut top up', 'top up by bank card',
+        'card top up', 'bank transfer to revolut', 'bank transfer from revolut',
+        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kałużny jacek', 'kaluzny jacek'
+    ]
+    if any(pattern in text for pattern in patterns):
+        return True
+    return False
+
+
 def fallback_classification(tx):
     amount = tx.amount
-    text = f'{tx.merchant_name} {tx.raw_description}'.lower()
-    if 'smart saver' in text or 'konto oszcz' in text or ('konto direct' in text and tx.user.get_username().lower() in text):
+    if looks_like_internal_transfer(tx):
         transaction_type = 'internal_transfer'
         category, subcategory = 'Przelewy wewnętrzne', 'konto własne'
     elif amount > 0:
@@ -84,6 +98,8 @@ def fallback_classification(tx):
 
 
 def classify_bank_transaction(tx):
+    if looks_like_internal_transfer(tx):
+        return fallback_classification(tx)
     if not getattr(settings, 'OPENAI_KEY', ''):
         return fallback_classification(tx)
 
