@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from django.conf import settings
 from openai import OpenAI
 from .categories import allowed_bank_categories_prompt_text, normalize_bank_category
@@ -81,6 +82,9 @@ SINGLE_JSON_SCHEMA = {
     'strict': True,
 }
 
+BANK_CLASSIFICATION_OVERALL_TIMEOUT_SECONDS = 45
+OPENAI_REQUEST_TIMEOUT_SECONDS = 25
+
 
 def looks_like_amount_fragment(value):
     value = str(value or '').strip()
@@ -93,47 +97,6 @@ def looks_like_amount_fragment(value):
 
 def _normalize_text_from_row(bank, row):
     return normalize_text(f'{bank} {row.get("merchant_name", "")} {row.get("raw_description", "")} {row.get("raw_row", {})}')
-
-
-def looks_like_internal_transfer_row(bank, row):
-    text = _normalize_text_from_row(bank, row)
-    patterns = [
-        'smart saver', 'konto oszcz', 'konto wlasne', 'wlasny rachunek', 'przelew wlasny',
-        'transfer wewnetrzny', 'internal transfer', 'own account', 'between your accounts',
-        'to your revolut', 'from your revolut', 'revolut top up', 'top up by bank card',
-        'card top up', 'bank transfer to revolut', 'bank transfer from revolut',
-        'zasilenie revolut', 'doladowanie revolut', 'wyplata z revolut', 'kaluzny jacek',
-        'apple pay deposit', 'deposit by', 'depositing savings', 'to pocket', 'from pocket', 'pocket pln',
-        'exchanged to', 'exchanged from', 'exchange current', 'wymiana walut', 'credit card repayment'
-    ]
-    return any(pattern in text for pattern in patterns)
-
-
-def internal_subcategory_row(bank, row):
-    text = _normalize_text_from_row(bank, row)
-    if 'exchanged' in text or 'exchange' in text or 'wymiana walut' in text:
-        return 'wymiana walut'
-    if 'pocket' in text or 'kieszen' in text:
-        return 'kieszeń Revolut'
-    if 'saving' in text or 'oszcz' in text:
-        return 'oszczędności'
-    if 'credit card repayment' in text or 'karta kredytowa' in text:
-        return 'karta kredytowa'
-    if 'revolut' in text or 'apple pay deposit' in text or 'deposit by' in text:
-        return 'Revolut'
-    return 'konto własne'
-
-
-def deterministic_internal_transfer_row(bank, row):
-    return {
-        'corrected_description': row.get('raw_description') or row.get('merchant_name') or '',
-        'merchant_name': row.get('merchant_name') or '',
-        'transaction_type': 'internal_transfer',
-        'category': 'Przelewy wewnętrzne',
-        'subcategory': internal_subcategory_row(bank, row),
-        'confidence': 1.0,
-        'notes': 'deterministic_internal_transfer',
-    }
 
 
 def _statement_payload(bank, rows):
@@ -161,6 +124,7 @@ def _chat_completion(client, messages, schema):
         messages=messages,
         response_format={'type': 'json_schema', 'json_schema': schema},
         temperature=0,
+        timeout=OPENAI_REQUEST_TIMEOUT_SECONDS,
     )
     return response.choices[0].message.content
 
@@ -225,7 +189,8 @@ def classify_bank_statement_rows(bank, rows):
     if not getattr(settings, 'OPENAI_KEY', ''):
         raise BankClassificationError('Brak OPENAI_KEY; nie można sklasyfikować wyciągu bankowego.')
 
-    client = OpenAI(api_key=settings.OPENAI_KEY)
+    started_at = time.monotonic()
+    client = OpenAI(api_key=settings.OPENAI_KEY, timeout=OPENAI_REQUEST_TIMEOUT_SECONDS)
     payload = _statement_payload(bank, rows)
     first_user_message = 'Sklasyfikuj cały importowany wyciąg bankowy w jednej odpowiedzi:\n' + json.dumps(payload, ensure_ascii=False)
     last_error = None
@@ -236,12 +201,14 @@ def classify_bank_statement_rows(bank, rows):
             {'role': 'user', 'content': first_user_message if attempt == 0 else first_user_message + f'\n\nTo jest pełna ponowna próba numer {attempt + 1}. Poprzednia rozmowa nie doprowadziła do poprawnej klasyfikacji całego wyciągu.'},
         ]
         for _ in range(10):
-            raw_content = _chat_completion(client, messages, STATEMENT_JSON_SCHEMA)
+            if time.monotonic() - started_at > BANK_CLASSIFICATION_OVERALL_TIMEOUT_SECONDS:
+                raise BankClassificationError('Klasyfikacja wyciągu trwała zbyt długo. Spróbuj ponownie albo zaimportuj krótszy zakres transakcji.')
             try:
+                raw_content = _chat_completion(client, messages, STATEMENT_JSON_SCHEMA)
                 return _validate_statement_response(raw_content, bank, rows)
             except (ValueError, json.JSONDecodeError, BankClassificationError) as error:
                 last_error = error
-                messages.append({'role': 'assistant', 'content': raw_content})
+                messages.append({'role': 'assistant', 'content': locals().get('raw_content', '')})
                 messages.append({
                     'role': 'user',
                     'content': (
@@ -253,6 +220,8 @@ def classify_bank_statement_rows(bank, rows):
                         'Nie używaj kategorii spoza listy, takich jak Zakupy albo Inne.'
                     )
                 })
+            except Exception as error:
+                raise BankClassificationError(f'Błąd komunikacji z OpenAI podczas klasyfikacji wyciągu: {error}')
     raise BankClassificationError(f'Nie udało się sklasyfikować całego wyciągu po 3 próbach i 10 korektach na próbę: {last_error}')
 
 
