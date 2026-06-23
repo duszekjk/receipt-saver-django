@@ -55,10 +55,10 @@ Zasady klasyfikacji:
 - category i subcategory muszą być wybrane wyłącznie z listy dozwolonych kategorii.
 - Zwracaj category i subcategory dokładnie tak, jak są zapisane na liście, razem z polskimi znakami.
 - Nie twórz własnych kategorii ani podkategorii.
-- Nie używaj category="Inne" ani subcategory="inne" dla produktów, które da się rozsądnie rozpoznać.
-- "Inne" jest ostatecznością tylko dla produktów naprawdę nieczytelnych albo niemożliwych do sklasyfikowania.
-- Jeżeli produkt jest żywnością, nigdy nie klasyfikuj go jako Inne.
-- Jeżeli nie jesteś pewien podkategorii produktu spożywczego, wybierz najbliższą podkategorię w Żywność zamiast Inne.
+- Nie istnieje kategoria "Inne" ani podkategoria "inne". Nie wolno ich używać.
+- Jeżeli produkt jest trudny, techniczny albo pomocniczy, wybierz najlepszą konkretną kategorię z listy, np. Opakowania i torby, Opłaty techniczne, Promocje i korekty, Usługi albo Nieczytelne pozycje.
+- Jeżeli produkt jest żywnością, wybierz najbliższą podkategorię w Żywność.
+- Nie klasyfikuj całego paragonu według sklepu. Klasyfikuj każdy produkt osobno.
 
 Przykłady klasyfikacji produktów spożywczych:
 - jaja, jajka, jaja kurze -> Żywność / jaja
@@ -80,10 +80,17 @@ Przykłady klasyfikacji produktów spożywczych:
 
 Przykłady innych klasyfikacji:
 - róże, tulipany, bukiet, kwiaty -> Dom / kwiaty
+- reklamówka, torba sklepowa -> Opakowania i torby / reklamówki
+- torba papierowa -> Opakowania i torby / torby papierowe
+- kaucja, depozyt za butelkę -> Opłaty techniczne / kaucja
+- opłata za dostawę -> Opłaty techniczne / opłata dostawy
+- rabat, kupon, korekta ceny -> Promocje i korekty / rabat albo Promocje i korekty / korekta ceny
 - papier toaletowy -> Dom / papier toaletowy
 - płyn do prania, kapsułki do prania -> Dom / pranie
 - płyn do naczyń, domestos, środek czystości -> Dom / środki czystości
 - szampon, mydło, pasta do zębów -> Higiena / higiena osobista
+- baterie -> Elektronika i akcesoria / baterie
+- koperta, długopis, zeszyt -> Biuro i papiernicze / artykuły piśmiennicze
 - piwo -> Alkohol / piwo
 - wino -> Alkohol / wino
 - wódka, whisky, rum, gin -> Alkohol / mocny alkohol
@@ -135,8 +142,6 @@ def _clean_item(item):
     if not name:
         raise ReceiptParseError('Pozycja paragonu bez nazwy produktu.')
     category, subcategory = normalize_category(item.get('category'), item.get('subcategory'))
-    if category == 'Inne' or subcategory == 'inne':
-        raise ReceiptParseError(f'Produkt {name!r} został sklasyfikowany jako Inne/inne. To jest niedozwolone poza naprawdę nieczytelnymi produktami.')
     return {
         'name': name,
         'quantity': _number(item.get('quantity')),
@@ -166,7 +171,7 @@ def _clean_response(data):
 
 
 def _call_openai(client, b64, extra_instruction=''):
-    user_text = 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem. Dodaj polskie znaki z kontekstu, jeżeli OCR ich nie pokazuje. Każda pozycja musi mieć poprawną kategorię i podkategorię z listy. Nie używaj Inne dla żywności ani dla oczywistych produktów.'
+    user_text = 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem. Dodaj polskie znaki z kontekstu, jeżeli OCR ich nie pokazuje. Każda pozycja musi mieć poprawną kategorię i podkategorię z listy. Nie używaj Inne/inne, bo takie kategorie nie istnieją.'
     if extra_instruction:
         user_text += '\n\nPoprzedni wynik był niepoprawny: ' + extra_instruction
     response = client.chat.completions.create(
