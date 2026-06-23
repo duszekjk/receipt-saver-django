@@ -1,12 +1,14 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.contrib import admin, messages
+from django.db import transaction
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncMonth
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 from django.utils import timezone
 from .models import BankTransaction, Family, MatchCandidate, Receipt, ReceiptItem
+from .utils import normalize_text
 
 
 def user_family(user):
@@ -89,11 +91,7 @@ def default_month(months):
 
 
 def month_label(value):
-    names = {
-        '01': 'styczeń', '02': 'luty', '03': 'marzec', '04': 'kwiecień',
-        '05': 'maj', '06': 'czerwiec', '07': 'lipiec', '08': 'sierpień',
-        '09': 'wrzesień', '10': 'październik', '11': 'listopad', '12': 'grudzień'
-    }
+    names = {'01': 'styczeń', '02': 'luty', '03': 'marzec', '04': 'kwiecień', '05': 'maj', '06': 'czerwiec', '07': 'lipiec', '08': 'sierpień', '09': 'wrzesień', '10': 'październik', '11': 'listopad', '12': 'grudzień'}
     try:
         year, month = value.split('-')
         return f'{names.get(month, month)} {year}'
@@ -160,28 +158,23 @@ def receipts_dashboard(request):
     available_months = available_months_for(all_receipts, all_banks)
     selected_month = request.GET.get('month') or default_month(available_months)
     receipts, banks = filter_to_month(all_receipts, all_banks, selected_month)
-
     subcategory_limit = int(request.GET.get('subcategory_limit') or 12)
     subcategory_limit = max(3, min(50, subcategory_limit))
     selected_category = request.GET.get('category') or ''
-
     receipt_ids = receipts.values_list('id', flat=True)
     receipt_items = ReceiptItem.objects.filter(receipt_id__in=receipt_ids)
     standalone_expenses = banks.filter(matched_receipt__isnull=True, amount__lt=0)
     incomes = banks.filter(amount__gt=0).exclude(transaction_type='internal_transfer')
-
     receipt_spent = money(receipt_items.aggregate(total=Sum('paid_price'))['total'])
     bank_spent = abs(money(standalone_expenses.aggregate(total=Sum('amount'))['total']))
     total_spent = receipt_spent + bank_spent
     total_income = money(incomes.aggregate(total=Sum('amount'))['total'])
     balance = total_income - total_spent
     saved = money(receipt_items.aggregate(total=Sum('discount_amount'))['total'])
-
     receipt_category_rows = receipt_items.values('category').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')
     bank_category_rows = standalone_expenses.values('category').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
     bank_category_rows = [{'category': row['category'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in bank_category_rows]
     category_rows = merge_rows(receipt_category_rows, bank_category_rows, 'category')
-
     sub_receipt_items = receipt_items
     sub_bank_expenses = standalone_expenses
     if selected_category:
@@ -191,21 +184,18 @@ def receipts_dashboard(request):
     bank_subcategory_rows = sub_bank_expenses.values('subcategory').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
     bank_subcategory_rows = [{'subcategory': row['subcategory'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in bank_subcategory_rows]
     subcategory_rows = merge_rows(receipt_subcategory_rows, bank_subcategory_rows, 'subcategory', limit=subcategory_limit)
-
     product_rows = attach_bars(receipt_items.values('name').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')[:subcategory_limit])
     merchant_receipt_rows = receipts.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')
     merchant_bank_rows = standalone_expenses.values('merchant_name').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
     merchant_bank_rows = [{'merchant_name': row['merchant_name'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in merchant_bank_rows]
     merchant_rows = merge_rows(merchant_receipt_rows, merchant_bank_rows, 'merchant_name', limit=subcategory_limit)
     available_categories = sorted(set([row.get('category') or 'inne' for row in category_rows]))
-
     pending_matches = MatchCandidate.objects.filter(status='needs_review')
     if family:
         pending_matches = pending_matches.filter(receipt__family=family)
     elif not request.user.is_superuser:
         pending_matches = pending_matches.none()
     pending_match_count = pending_matches.count()
-
     duplicate_qs = Receipt.objects.filter(duplicate_of__isnull=False)
     if family:
         duplicate_qs = duplicate_qs.filter(family=family)
@@ -214,40 +204,14 @@ def receipts_dashboard(request):
     duplicate_count = duplicate_qs.count()
     uncategorized_count = standalone_expenses.filter(category__in=['', 'inne']).count() + receipt_items.filter(category__in=['', 'inne']).count()
     attention_count = pending_match_count + duplicate_count + uncategorized_count
-
-    context = {
-        **admin.site.each_context(request),
-        'title': 'Dashboard wydatków',
-        'families': families,
-        'selected_family': family,
-        'available_months': [{'value': month, 'label': month_label(month)} for month in available_months],
-        'selected_month': selected_month,
-        'selected_month_label': month_label(selected_month),
-        'subcategory_limit': subcategory_limit,
-        'selected_category': selected_category,
-        'available_categories': available_categories,
-        'spent_display': format_money(total_spent),
-        'income_display': format_money(total_income),
-        'balance_display': format_money(balance),
-        'saved_display': format_money(saved),
-        'savings_rate': min(100, percent(saved, total_spent)) if total_spent else 0,
-        'attention_count': attention_count,
-        'category_rows': category_rows,
-        'subcategory_rows': subcategory_rows,
-        'product_rows': product_rows,
-        'merchant_rows': merchant_rows,
-        'recent_expenses': standalone_expenses.order_by('-transaction_at', '-booked_at', '-id')[:8],
-        'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:8],
-        'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:8],
-        'technical': {'pending_match_count': pending_match_count, 'duplicate_count': duplicate_count, 'uncategorized_count': uncategorized_count},
-    }
+    context = {**admin.site.each_context(request), 'title': 'Dashboard wydatków', 'families': families, 'selected_family': family, 'available_months': [{'value': month, 'label': month_label(month)} for month in available_months], 'selected_month': selected_month, 'selected_month_label': month_label(selected_month), 'subcategory_limit': subcategory_limit, 'selected_category': selected_category, 'available_categories': available_categories, 'spent_display': format_money(total_spent), 'income_display': format_money(total_income), 'balance_display': format_money(balance), 'saved_display': format_money(saved), 'savings_rate': min(100, percent(saved, total_spent)) if total_spent else 0, 'attention_count': attention_count, 'category_rows': category_rows, 'subcategory_rows': subcategory_rows, 'product_rows': product_rows, 'merchant_rows': merchant_rows, 'recent_expenses': standalone_expenses.order_by('-transaction_at', '-booked_at', '-id')[:8], 'recent_receipts': receipts.select_related('user', 'family').order_by('-purchased_at', '-created_at')[:8], 'pending_matches': pending_matches.select_related('receipt', 'bank_transaction').order_by('-score')[:8], 'technical': {'pending_match_count': pending_match_count, 'duplicate_count': duplicate_count, 'uncategorized_count': uncategorized_count}}
     return render(request, 'admin/receipts/dashboard.html', context)
 
 
 def import_bank_statement_admin(request):
     from .bank_parsers import parse_bank_statement
     from .forms import BankStatementImportForm
-    from .openai_bank_transactions import apply_bank_transaction_classification
+    from .openai_bank_transactions import BankClassificationError, classify_bank_statement_rows
     from .services import match_bank_transactions_for_receipt
 
     family = selected_family(request)
@@ -256,15 +220,32 @@ def import_bank_statement_admin(request):
         if form.is_valid():
             bank = form.cleaned_data['bank']
             file_obj = form.cleaned_data['file']
-            created = 0
-            for row in parse_bank_statement(file_obj, bank):
-                tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file_obj.name, **row)
-                apply_bank_transaction_classification(tx)
-                created += 1
-            for receipt in family_receipts_queryset(request):
-                match_bank_transactions_for_receipt(receipt)
-            messages.success(request, f'Zaimportowano transakcje: {created}')
-            return redirect(reverse('admin:receipts_dashboard'))
+            try:
+                parsed_rows = list(parse_bank_statement(file_obj, bank))
+                classifications = classify_bank_statement_rows(bank, parsed_rows)
+                if not parsed_rows:
+                    messages.error(request, 'Nie znaleziono żadnych transakcji w pliku wyciągu.')
+                else:
+                    with transaction.atomic():
+                        created = 0
+                        for row, data in zip(parsed_rows, classifications):
+                            tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file_obj.name, **row)
+                            tx.corrected_description = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
+                            tx.merchant_name = tx.merchant_name or data.get('merchant_name') or ''
+                            tx.merchant_normalized = normalize_text(tx.merchant_name)
+                            tx.transaction_type = data.get('transaction_type') or ''
+                            tx.category = data.get('category') or ''
+                            tx.subcategory = data.get('subcategory') or ''
+                            tx.classification_source = 'openai'
+                            tx.raw_classification_json = data
+                            tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
+                            created += 1
+                        for receipt in family_receipts_queryset(request):
+                            match_bank_transactions_for_receipt(receipt)
+                    messages.success(request, f'Zaimportowano transakcje: {created}')
+                    return redirect(reverse('admin:receipts_dashboard'))
+            except (BankClassificationError, ValueError) as error:
+                messages.error(request, f'Nie udało się zaimportować wyciągu: {error}')
     else:
         form = BankStatementImportForm()
     return render(request, 'admin/receipts/import_bank_statement.html', {**admin.site.each_context(request), 'title': 'Import wyciągu bankowego', 'form': form, 'selected_family': family})
@@ -272,13 +253,8 @@ def import_bank_statement_admin(request):
 
 def register_admin_dashboard(admin_site):
     original_get_urls = admin_site.get_urls
-
     def get_urls():
-        return [
-            path('receipts-dashboard/', admin_site.admin_view(receipts_dashboard), name='receipts_dashboard'),
-            path('receipts-bank-import/', admin_site.admin_view(import_bank_statement_admin), name='receipts_bank_import'),
-        ] + original_get_urls()
-
+        return [path('receipts-dashboard/', admin_site.admin_view(receipts_dashboard), name='receipts_dashboard'), path('receipts-bank-import/', admin_site.admin_view(import_bank_statement_admin), name='receipts_bank_import')] + original_get_urls()
     admin_site.get_urls = get_urls
 
 
