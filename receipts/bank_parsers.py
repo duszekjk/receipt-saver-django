@@ -8,6 +8,7 @@ from .utils import normalize_text
 
 
 HEADER_MARKERS = ['data transakcji', 'data ksiegowania', 'kwota transakcji']
+REVOLUT_HEADER_MARKERS = ['completed date', 'description', 'amount']
 
 
 def parse_date(value):
@@ -16,9 +17,9 @@ def parse_date(value):
         return None
     if hasattr(value, 'date'):
         return value.date()
-    for fmt in ['%Y-%m-%d', '%d.%m.%Y', '%d-%m-%Y', '%Y/%m/%d', '%d/%m/%Y']:
+    for fmt in ['%Y-%m-%d', '%d.%m.%Y', '%d-%m-%Y', '%Y/%m/%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S %z']:
         try:
-            return datetime.strptime(value[:10], fmt).date()
+            return datetime.strptime(value[:19], fmt.replace(' %z', '')).date()
         except ValueError:
             pass
     try:
@@ -45,10 +46,13 @@ def decode_text(raw):
     return raw.decode('utf-8', errors='ignore')
 
 
-def find_header_line(lines):
+def find_header_line(lines, bank=''):
+    markers = REVOLUT_HEADER_MARKERS if bank == 'revolut' else HEADER_MARKERS
     for index, line in enumerate(lines):
         normalized = normalize_text(line)
-        if all(marker in normalized for marker in HEADER_MARKERS):
+        if all(marker in normalized for marker in markers):
+            return index
+        if bank == 'revolut' and 'started date' in normalized and 'description' in normalized and 'amount' in normalized:
             return index
         if 'data transakcji' in normalized and 'kwota' in normalized:
             return index
@@ -78,26 +82,26 @@ def rows_from_records(records):
     return rows
 
 
-def read_excel_rows(raw):
+def read_excel_rows(raw, bank=''):
     frame = pd.read_excel(io.BytesIO(raw), dtype=str, header=None).fillna('')
     lines = [';'.join(str(value) for value in row) for row in frame.values.tolist()]
-    header_index = find_header_line(lines)
+    header_index = find_header_line(lines, bank=bank)
     headers = make_unique_headers(frame.iloc[header_index].tolist())
     data = frame.iloc[header_index + 1:].copy()
     data.columns = headers
     return rows_from_records(data.to_dict(orient='records'))
 
 
-def read_csv_rows(raw):
+def read_csv_rows(raw, bank=''):
     text = decode_text(raw)
     lines = text.splitlines()
-    header_index = find_header_line(lines)
+    header_index = find_header_line(lines, bank=bank)
     table_text = '\n'.join(lines[header_index:])
     try:
-        dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';\t')
+        dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';\t,')
     except csv.Error:
         dialect = csv.excel
-        dialect.delimiter = ';'
+        dialect.delimiter = ',' if bank == 'revolut' else ';'
     reader = csv.reader(io.StringIO(table_text), dialect=dialect)
     try:
         headers = make_unique_headers(next(reader))
@@ -114,12 +118,12 @@ def read_csv_rows(raw):
     return rows
 
 
-def read_statement_rows(file_obj):
+def read_statement_rows(file_obj, bank=''):
     name = getattr(file_obj, 'name', '').lower()
     raw = file_obj.read()
     if name.endswith(('.xls', '.xlsx')):
-        return read_excel_rows(raw)
-    return read_csv_rows(raw)
+        return read_excel_rows(raw, bank=bank)
+    return read_csv_rows(raw, bank=bank)
 
 
 def exact_pick(row, *keys):
@@ -161,8 +165,44 @@ def get_ing_amount_and_currency(row):
     return amount, clean_currency(currency)
 
 
+def parse_revolut_statement_row(row):
+    completed = pick(row, 'Completed Date', 'Completed date', 'Date completed')
+    started = pick(row, 'Started Date', 'Started date', 'Date started')
+    date_value = completed or started
+    amount = pick(row, 'Amount')
+    currency = clean_currency(pick(row, 'Currency', 'Account Currency', 'Account currency'))
+    description = str(pick(row, 'Description', 'Reference', 'Merchant')).strip()
+    transaction_type = str(pick(row, 'Type')).strip()
+    state = str(pick(row, 'State')).strip()
+    fee = pick(row, 'Fee')
+    balance = pick(row, 'Balance')
+    parsed_amount = parse_amount(amount)
+    parsed_date = parse_date(date_value)
+    if not parsed_date or parsed_amount == 0:
+        return None
+    desc_parts = [description, transaction_type, state]
+    desc = ' '.join(part for part in desc_parts if part)
+    return {
+        'booked_at': parsed_date,
+        'transaction_at': parsed_date,
+        'merchant_name': description[:255] or 'Revolut',
+        'merchant_normalized': normalize_text(description),
+        'raw_description': desc,
+        'amount': parsed_amount,
+        'currency': currency,
+        'raw_row': row | {'_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or '')},
+    }
+
+
 def parse_bank_statement(file_obj, bank: str):
-    for row in read_statement_rows(file_obj):
+    bank = (bank or '').lower()
+    for row in read_statement_rows(file_obj, bank=bank):
+        if bank == 'revolut':
+            parsed = parse_revolut_statement_row(row)
+            if parsed:
+                yield parsed
+            continue
+
         booked = pick(row, 'Data księgowania', 'Data ksiegowania')
         tx_date = pick(row, 'Data transakcji', 'Data operacji', 'Data')
         desc = ' '.join(
