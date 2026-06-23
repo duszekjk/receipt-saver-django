@@ -44,8 +44,8 @@ RECEIPT_CATEGORIES = {
 }
 
 BANK_TRANSACTION_CATEGORIES = RECEIPT_CATEGORIES | {
-    'Przychody': ['wynagrodzenie', 'emerytura', 'renta', 'zwrot', 'darowizna otrzymana', 'sprzedaż'],
-    'Przelewy wewnętrzne': ['konto własne', 'oszczędności', 'walutowe'],
+    'Przychody': ['wynagrodzenie', 'emerytura', 'renta', 'zwrot', 'darowizna otrzymana', 'sprzedaż', 'pozostałe przychody'],
+    'Przelewy wewnętrzne': ['konto własne', 'oszczędności', 'walutowe', 'Revolut', 'kieszeń Revolut', 'karta kredytowa', 'wymiana walut'],
 }
 
 
