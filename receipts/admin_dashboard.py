@@ -48,7 +48,7 @@ def family_bank_queryset(request):
         qs = qs.filter(family=family)
     elif not request.user.is_superuser:
         qs = qs.none()
-    return qs
+    return qs.exclude(transaction_type='internal_transfer')
 
 
 def parse_month(value):
@@ -146,7 +146,10 @@ def filter_to_month(receipts, banks, selected_month):
     if not start:
         return receipts.none(), banks.none()
     end = next_month(start)
-    return receipts.filter(purchased_at__gte=start, purchased_at__lt=end), banks.filter(transaction_at__gte=start, transaction_at__lt=end)
+    tz = timezone.get_current_timezone()
+    receipt_start = timezone.make_aware(datetime.combine(start, datetime.min.time()), tz)
+    receipt_end = timezone.make_aware(datetime.combine(end, datetime.min.time()), tz)
+    return receipts.filter(purchased_at__gte=receipt_start, purchased_at__lt=receipt_end), banks.filter(transaction_at__gte=start, transaction_at__lt=end)
 
 
 def receipts_dashboard(request):
@@ -189,7 +192,7 @@ def receipts_dashboard(request):
     bank_subcategory_rows = [{'subcategory': row['subcategory'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in bank_subcategory_rows]
     subcategory_rows = merge_rows(receipt_subcategory_rows, bank_subcategory_rows, 'subcategory', limit=subcategory_limit)
 
-    product_rows = attach_bars(receipt_items.values('name_normalized').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')[:subcategory_limit])
+    product_rows = attach_bars(receipt_items.values('name').annotate(spent=Sum('paid_price'), saved=Sum('discount_amount'), count=Count('id')).order_by('-spent')[:subcategory_limit])
     merchant_receipt_rows = receipts.values('merchant_name').annotate(spent=Sum('total_amount'), count=Count('id')).order_by('-spent')
     merchant_bank_rows = standalone_expenses.values('merchant_name').annotate(spent=Sum('amount'), count=Count('id')).order_by('spent')
     merchant_bank_rows = [{'merchant_name': row['merchant_name'] or 'inne', 'spent': abs(money(row['spent'])), 'saved': Decimal('0.00'), 'count': row['count']} for row in merchant_bank_rows]
@@ -258,24 +261,22 @@ def import_bank_statement_admin(request):
                 tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file_obj.name, **row)
                 apply_bank_transaction_classification(tx)
                 created += 1
-            if family:
-                for receipt in Receipt.objects.filter(family=family, duplicate_of__isnull=True):
-                    match_bank_transactions_for_receipt(receipt)
+            for receipt in family_receipts_queryset(request):
+                match_bank_transactions_for_receipt(receipt)
             messages.success(request, f'Zaimportowano transakcje: {created}')
-            return redirect(reverse('admin:receipts_banktransaction_changelist'))
+            return redirect(reverse('admin:receipts_dashboard'))
     else:
         form = BankStatementImportForm()
     return render(request, 'admin/receipts/import_bank_statement.html', {**admin.site.each_context(request), 'title': 'Import wyciągu bankowego', 'form': form, 'selected_family': family})
 
 
-def install_receipts_admin_dashboard():
-    original_get_urls = admin.site.get_urls
+def register_admin_dashboard(admin_site):
+    original_get_urls = admin_site.get_urls
 
     def get_urls():
-        custom = [
-            path('receipts-dashboard/', admin.site.admin_view(receipts_dashboard), name='receipts-dashboard'),
-            path('receipts-import-bank-statement/', admin.site.admin_view(import_bank_statement_admin), name='receipts-import-bank-statement'),
-        ]
-        return custom + original_get_urls()
+        return [
+            path('receipts-dashboard/', admin_site.admin_view(receipts_dashboard), name='receipts_dashboard'),
+            path('receipts-bank-import/', admin_site.admin_view(import_bank_statement_admin), name='receipts_bank_import'),
+        ] + original_get_urls()
 
-    admin.site.get_urls = get_urls
+    admin_site.get_urls = get_urls
