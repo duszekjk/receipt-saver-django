@@ -3,7 +3,11 @@ import json
 from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from openai import OpenAI
-from .categories import allowed_categories_prompt_text, infer_category_from_name
+from .categories import allowed_categories_prompt_text, normalize_category
+
+
+class ReceiptParseError(ValueError):
+    pass
 
 
 def _money(value):
@@ -25,18 +29,74 @@ def _number(value):
 
 
 SYSTEM_PROMPT = f'''
-Jesteś parserem polskich paragonów. Zwracasz wyłącznie poprawny JSON.
-Rozpoznaj sklep, datę, godzinę, sumę, produkty, promocje i oszczędności.
+Jesteś parserem polskich paragonów i ekspertem od klasyfikacji produktów z polskich sklepów.
+Zwracasz wyłącznie poprawny JSON zgodny ze schematem. Nie dodajesz komentarzy poza JSON.
 
-Bardzo ważne:
-- Zachowuj polskie znaki w nazwach produktów, kategorii i podkategorii.
-- Każdy produkt musi mieć category i subcategory wybrane wyłącznie z poniższej listy.
-- Nie wolno tworzyć własnych kategorii ani podkategorii.
-- category i subcategory zwracaj dokładnie tak, jak są zapisane poniżej, razem z polskimi znakami.
-- Używaj "Inne" wyłącznie wtedy, gdy naprawdę nie da się rozsądnie dopasować produktu.
-- Oczywiste produkty dopasowuj konkretnie: miód = Żywność/miód, róże i kwiaty = Dom/kwiaty, chleb = Żywność/pieczywo.
+Twoje zadania:
+1. Odczytaj z paragonu sklep, datę, godzinę, sumę, walutę i metodę płatności.
+2. Odczytaj wszystkie pozycje paragonu: nazwę produktu, ilość, cenę jednostkową, cenę zapłaconą, cenę regularną, rabat, nazwę promocji i informację, czy produkt był przeceniony.
+3. Dla każdej pozycji wybierz category i subcategory wyłącznie z listy dozwolonych kategorii poniżej.
+4. Zachowaj i odtwarzaj polskie znaki w nazwach produktów, kategorii i podkategorii.
 
-Dozwolone kategorie:
+Bardzo ważne zasady dotyczące polskich znaków:
+- Jeżeli na paragonie, zdjęciu albo OCR nie pokazuje polskich znaków, dodaj je z kontekstu języka polskiego.
+- "zelatyna" zwróć jako "żelatyna".
+- "maka" zwróć jako "mąka", jeśli z kontekstu chodzi o produkt spożywczy.
+- "smietana" zwróć jako "śmietana".
+- "wedlina" zwróć jako "wędlina".
+- "ogorek" zwróć jako "ogórek".
+- "jablko" zwróć jako "jabłko".
+- "miod" zwróć jako "miód".
+- "roze" zwróć jako "róże".
+- Nie usuwaj polskich znaków. Nie zamieniaj "ż" na "z", "ł" na "l", "ó" na "o", "ą" na "a" itd.
+
+Zasady klasyfikacji:
+- Każdy produkt musi mieć category i subcategory.
+- category i subcategory muszą być wybrane wyłącznie z listy dozwolonych kategorii.
+- Zwracaj category i subcategory dokładnie tak, jak są zapisane na liście, razem z polskimi znakami.
+- Nie twórz własnych kategorii ani podkategorii.
+- Nie używaj category="Inne" ani subcategory="inne" dla produktów, które da się rozsądnie rozpoznać.
+- "Inne" jest ostatecznością tylko dla produktów naprawdę nieczytelnych albo niemożliwych do sklasyfikowania.
+- Jeżeli produkt jest żywnością, nigdy nie klasyfikuj go jako Inne.
+- Jeżeli nie jesteś pewien podkategorii produktu spożywczego, wybierz najbliższą podkategorię w Żywność zamiast Inne.
+
+Przykłady klasyfikacji produktów spożywczych:
+- jaja, jajka, jaja kurze -> Żywność / jaja
+- żelatyna, galaretka, kisiel, budyń, proszek do pieczenia, drożdże, cukier wanilinowy -> Żywność / dodatki do pieczenia
+- mąka, cukier, ryż, sól -> Żywność / produkty sypkie
+- makaron, kasza, płatki owsiane -> Żywność / makarony i kasze
+- miód -> Żywność / miód
+- mleko, śmietana, kefir -> Żywność / nabiał
+- ser, twaróg, mozzarella -> Żywność / sery
+- jogurt -> Żywność / jogurty
+- masło -> Żywność / masło
+- chleb, bułki, bagietka -> Żywność / pieczywo
+- jabłka, banany, gruszki, truskawki -> Żywność / owoce
+- pomidory, ogórki, ziemniaki, marchew -> Żywność / warzywa
+- szynka, kiełbasa, parówki -> Żywność / wędliny
+- kurczak, wołowina, wieprzowina -> Żywność / mięso
+- czekolada, ciastka, cukierki, lody -> Żywność / słodycze
+- woda, sok, cola, napój -> Żywność / napoje
+
+Przykłady innych klasyfikacji:
+- róże, tulipany, bukiet, kwiaty -> Dom / kwiaty
+- papier toaletowy -> Dom / papier toaletowy
+- płyn do prania, kapsułki do prania -> Dom / pranie
+- płyn do naczyń, domestos, środek czystości -> Dom / środki czystości
+- szampon, mydło, pasta do zębów -> Higiena / higiena osobista
+- piwo -> Alkohol / piwo
+- wino -> Alkohol / wino
+- wódka, whisky, rum, gin -> Alkohol / mocny alkohol
+- lotto, zakłady sportowe -> Hazard / lotto albo Hazard / zakłady sportowe
+
+Ważne zasady cen:
+- paid_price to cena faktycznie zapłacona za pozycję.
+- regular_price to cena bez promocji, jeśli jest możliwa do rozpoznania.
+- discount_amount to oszczędność na pozycji, jeśli jest możliwa do rozpoznania, w przeciwnym razie 0.00.
+- Jeżeli nie widać ilości, quantity może być null.
+- Jeżeli nie widać ceny jednostkowej, unit_price może być null.
+
+Dozwolone kategorie i podkategorie — nie wolno pominąć tej listy i nie wolno tworzyć nic poza nią:
 {allowed_categories_prompt_text()}
 '''
 
@@ -71,8 +131,12 @@ JSON_SCHEMA = {
 
 
 def _clean_item(item):
-    name = item.get('name') or ''
-    category, subcategory = infer_category_from_name(name, item.get('category'), item.get('subcategory'))
+    name = (item.get('name') or '').strip()
+    if not name:
+        raise ReceiptParseError('Pozycja paragonu bez nazwy produktu.')
+    category, subcategory = normalize_category(item.get('category'), item.get('subcategory'))
+    if category == 'Inne' or subcategory == 'inne':
+        raise ReceiptParseError(f'Produkt {name!r} został sklasyfikowany jako Inne/inne. To jest niedozwolone poza naprawdę nieczytelnymi produktami.')
     return {
         'name': name,
         'quantity': _number(item.get('quantity')),
@@ -89,8 +153,8 @@ def _clean_item(item):
 
 def _clean_response(data):
     items = data.get('items') or []
-    if not isinstance(items, list):
-        items = []
+    if not isinstance(items, list) or not items:
+        raise ReceiptParseError('OpenAI nie zwrócił listy pozycji paragonu.')
     return {
         'merchant_name': data.get('merchant_name') or '',
         'purchased_at': data.get('purchased_at'),
@@ -101,20 +165,35 @@ def _clean_response(data):
     }
 
 
-def parse_receipt_image(image_path: str) -> dict:
-    client = OpenAI(api_key=settings.OPENAI_KEY)
-    with open(image_path, 'rb') as f:
-        b64 = base64.b64encode(f.read()).decode('utf-8')
+def _call_openai(client, b64, extra_instruction=''):
+    user_text = 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem. Dodaj polskie znaki z kontekstu, jeżeli OCR ich nie pokazuje. Każda pozycja musi mieć poprawną kategorię i podkategorię z listy. Nie używaj Inne dla żywności ani dla oczywistych produktów.'
+    if extra_instruction:
+        user_text += '\n\nPoprzedni wynik był niepoprawny: ' + extra_instruction
     response = client.chat.completions.create(
         model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'),
         messages=[
             {'role': 'system', 'content': SYSTEM_PROMPT},
             {'role': 'user', 'content': [
-                {'type': 'text', 'text': 'Przeanalizuj paragon i zwróć JSON zgodny ze schematem. Zachowaj polskie znaki i nie używaj kategorii Inne dla oczywistych produktów.'},
+                {'type': 'text', 'text': user_text},
                 {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}}
             ]},
         ],
         response_format={'type': 'json_schema', 'json_schema': JSON_SCHEMA},
         temperature=0,
     )
-    return _clean_response(json.loads(response.choices[0].message.content))
+    return json.loads(response.choices[0].message.content)
+
+
+def parse_receipt_image(image_path: str) -> dict:
+    client = OpenAI(api_key=settings.OPENAI_KEY)
+    with open(image_path, 'rb') as f:
+        b64 = base64.b64encode(f.read()).decode('utf-8')
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            data = _call_openai(client, b64, str(last_error) if last_error else '')
+            return _clean_response(data)
+        except (ValueError, ReceiptParseError, json.JSONDecodeError) as error:
+            last_error = error
+    raise ReceiptParseError(f'Nie udało się poprawnie zdekodować paragonu po 3 próbach: {last_error}')
