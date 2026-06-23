@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
 from django.utils import timezone
@@ -9,7 +10,7 @@ from rest_framework.response import Response
 from .authentication import AppTokenAuthentication
 from .bank_parsers import parse_bank_csv
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
-from .openai_bank_transactions import apply_bank_transaction_classification
+from .openai_bank_transactions import BankClassificationError, apply_bank_transaction_classification
 from .serializers import MatchCandidateSerializer, ReceiptSerializer
 from .services import create_receipt_from_image, match_bank_transactions_for_receipt
 
@@ -226,18 +227,31 @@ def import_bank_statement(request):
     file = request.FILES.get('file')
     bank = request.data.get('bank', 'unknown')
     if not file:
-        return Response({'error': 'Missing file'}, status=400)
+        return Response({'detail': 'Missing file'}, status=400)
+    try:
+        parsed_rows = list(parse_bank_csv(file, bank))
+    except Exception as error:
+        return Response({'detail': f'Nie udało się odczytać pliku wyciągu: {error}'}, status=400)
+    if not parsed_rows:
+        return Response({'detail': 'Nie znaleziono żadnych transakcji w pliku wyciągu.'}, status=400)
+
     family = user_family(request.user)
-    created = 0
-    classified = 0
-    for row in parse_bank_csv(file, bank):
-        tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file.name, **row)
-        apply_bank_transaction_classification(tx)
-        created += 1
-        classified += 1
-    for receipt in visible_receipts(request.user).filter(duplicate_of__isnull=True):
-        match_bank_transactions_for_receipt(receipt)
-    return Response({'created': created, 'classified': classified})
+    try:
+        with transaction.atomic():
+            created = 0
+            classified = 0
+            for row in parsed_rows:
+                tx = BankTransaction.objects.create(user=request.user, family=family, bank=bank, source_file_name=file.name, **row)
+                apply_bank_transaction_classification(tx)
+                created += 1
+                classified += 1
+            for receipt in visible_receipts(request.user).filter(duplicate_of__isnull=True):
+                match_bank_transactions_for_receipt(receipt)
+        return Response({'created': created, 'classified': classified})
+    except BankClassificationError as error:
+        return Response({'detail': f'Błąd importu wyciągu: {error}'}, status=400)
+    except ValueError as error:
+        return Response({'detail': f'Błąd importu wyciągu: {error}'}, status=400)
 
 
 @api_view(['GET'])
