@@ -6,6 +6,10 @@ from .categories import allowed_bank_categories_prompt_text, normalize_bank_cate
 from .utils import normalize_text
 
 
+class BankClassificationError(ValueError):
+    pass
+
+
 SYSTEM_PROMPT = f'''
 Jesteś klasyfikatorem polskich transakcji bankowych. Zwracasz wyłącznie poprawny JSON.
 Klasyfikujesz pojedynczy wiersz wyciągu bankowego.
@@ -83,70 +87,88 @@ def internal_subcategory(tx):
     return 'konto własne'
 
 
-def fallback_classification(tx):
-    amount = tx.amount
-    if looks_like_internal_transfer(tx):
-        transaction_type = 'internal_transfer'
-        category, subcategory = 'Przelewy wewnętrzne', internal_subcategory(tx)
-    elif amount > 0:
-        transaction_type = 'income'
-        category, subcategory = 'Przychody', 'pozostałe przychody'
-    elif amount < 0:
-        transaction_type = 'expense'
-        category, subcategory = 'Nieczytelne pozycje', 'produkt niejednoznaczny'
-    else:
-        transaction_type = 'neutral'
-        category, subcategory = 'Promocje i korekty', 'korekta ceny'
+def deterministic_internal_transfer(tx):
     return {
         'corrected_description': tx.raw_description or tx.merchant_name or '',
         'merchant_name': tx.merchant_name or '',
-        'transaction_type': transaction_type,
-        'category': category,
-        'subcategory': subcategory,
-        'confidence': 0.25,
-        'notes': 'fallback',
+        'transaction_type': 'internal_transfer',
+        'category': 'Przelewy wewnętrzne',
+        'subcategory': internal_subcategory(tx),
+        'confidence': 1.0,
+        'notes': 'deterministic_internal_transfer',
     }
 
 
-def _classify_with_openai(tx, retry_error=None):
-    client = OpenAI(api_key=settings.OPENAI_KEY)
-    payload = {'bank': tx.bank, 'booked_at': str(tx.booked_at or ''), 'transaction_at': str(tx.transaction_at or ''), 'merchant_name': tx.merchant_name, 'raw_description': tx.raw_description, 'amount': str(tx.amount), 'currency': tx.currency, 'raw_row': tx.raw_row}
-    user_text = 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(payload, ensure_ascii=False)
-    if retry_error:
-        user_text += '\n\nPoprzednia odpowiedź była niepoprawna: ' + str(retry_error) + '\nPopraw JSON. Category i subcategory muszą być dokładnie z listy. Nie używaj kategorii Zakupy, Inne ani innych spoza listy.'
+def _payload(tx):
+    return {
+        'bank': tx.bank,
+        'booked_at': str(tx.booked_at or ''),
+        'transaction_at': str(tx.transaction_at or ''),
+        'merchant_name': tx.merchant_name,
+        'raw_description': tx.raw_description,
+        'amount': str(tx.amount),
+        'currency': tx.currency,
+        'raw_row': tx.raw_row,
+    }
+
+
+def _chat_completion(client, messages):
     response = client.chat.completions.create(
         model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'),
-        messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': user_text}],
+        messages=messages,
         response_format={'type': 'json_schema', 'json_schema': JSON_SCHEMA},
         temperature=0,
     )
-    data = json.loads(response.choices[0].message.content)
+    return response.choices[0].message.content
+
+
+def _clean_classification(raw_content, tx):
+    data = json.loads(raw_content)
     category, subcategory = normalize_bank_category(data.get('category'), data.get('subcategory'))
     data['category'] = category
     data['subcategory'] = subcategory
+    if data.get('transaction_type') not in ['expense', 'income', 'internal_transfer', 'neutral']:
+        raise BankClassificationError(f'Niepoprawny transaction_type: {data.get("transaction_type")!r}')
+    data['corrected_description'] = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
+    if looks_like_amount_fragment(data.get('merchant_name')):
+        data['merchant_name'] = tx.merchant_name or ''
     return data
 
 
 def classify_bank_transaction(tx):
     if looks_like_internal_transfer(tx):
-        return fallback_classification(tx)
+        return deterministic_internal_transfer(tx)
     if not getattr(settings, 'OPENAI_KEY', ''):
-        return fallback_classification(tx)
+        raise BankClassificationError('Brak OPENAI_KEY; nie można sklasyfikować transakcji bankowej.')
+
+    client = OpenAI(api_key=settings.OPENAI_KEY)
+    first_user_message = 'Sklasyfikuj tę transakcję bankową:\n' + json.dumps(_payload(tx), ensure_ascii=False)
     last_error = None
-    for _ in range(2):
-        try:
-            data = _classify_with_openai(tx, retry_error=last_error)
-            if data.get('transaction_type') not in ['expense', 'income', 'internal_transfer', 'neutral']:
-                data['transaction_type'] = fallback_classification(tx)['transaction_type']
-            data['corrected_description'] = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
-            if looks_like_amount_fragment(data.get('merchant_name')):
-                data['merchant_name'] = tx.merchant_name or ''
-            return data
-        except (ValueError, json.JSONDecodeError) as error:
-            last_error = error
-    fallback = fallback_classification(tx)
-    fallback['notes'] = 'fallback_after_invalid_openai_category: ' + str(last_error)
-    return fallback
+
+    for attempt in range(3):
+        messages = [
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user', 'content': first_user_message if attempt == 0 else first_user_message + f'\n\nTo jest ponowna próba numer {attempt + 1}. Poprzednie próby nie zwróciły poprawnej kategorii.'},
+        ]
+        for correction_index in range(10):
+            raw_content = _chat_completion(client, messages)
+            try:
+                return _clean_classification(raw_content, tx)
+            except (ValueError, json.JSONDecodeError, BankClassificationError) as error:
+                last_error = error
+                messages.append({'role': 'assistant', 'content': raw_content})
+                messages.append({
+                    'role': 'user',
+                    'content': (
+                        'Zwróciłeś niepoprawną klasyfikację transakcji bankowej. '
+                        'Popraw cały JSON i odeślij ponownie wyłącznie poprawny JSON zgodny ze schematem.\n\n'
+                        f'Błąd walidacji: {error}\n\n'
+                        'category i subcategory muszą być dokładnie z listy dozwolonych kategorii. '
+                        'Nie używaj kategorii spoza listy, takich jak Zakupy albo Inne. '
+                        'Wybierz najbliższą konkretną kategorię z listy.'
+                    )
+                })
+    raise BankClassificationError(f'Nie udało się sklasyfikować transakcji po 3 próbach i 10 korektach na próbę: {last_error}')
 
 
 def apply_bank_transaction_classification(tx):
@@ -158,7 +180,7 @@ def apply_bank_transaction_classification(tx):
     tx.transaction_type = data.get('transaction_type') or ''
     tx.category = data.get('category') or ''
     tx.subcategory = data.get('subcategory') or ''
-    tx.classification_source = 'openai' if not str(data.get('notes', '')).startswith('fallback') else 'fallback'
+    tx.classification_source = 'openai' if data.get('notes') != 'deterministic_internal_transfer' else 'deterministic'
     tx.raw_classification_json = data
     tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
     return tx
