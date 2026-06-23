@@ -6,37 +6,46 @@ RECEIPT_CATEGORIES = {
         'mięso', 'wędliny', 'ryby', 'mrożonki', 'produkty sypkie', 'makarony i kasze',
         'dodatki do pieczenia', 'przyprawy', 'słodycze', 'miód', 'dżemy i kremy',
         'napoje', 'woda', 'soki', 'kawa', 'herbata', 'gotowe dania', 'konserwy',
-        'sosy i dodatki', 'inne'
+        'sosy i dodatki'
     ],
     'Zdrowie': [
         'lekarz', 'dentysta', 'okulista', 'rehabilitacja', 'apteka', 'leki',
-        'suplementy', 'sprzęt medyczny', 'badania', 'inne'
+        'suplementy', 'sprzęt medyczny', 'badania'
     ],
     'Dom': [
         'chemia domowa', 'środki czystości', 'papier toaletowy', 'ręczniki papierowe',
-        'pranie', 'kuchnia', 'remont', 'narzędzia', 'ogród', 'kwiaty', 'dekoracje', 'inne'
+        'pranie', 'kuchnia', 'remont', 'narzędzia', 'ogród', 'kwiaty', 'dekoracje'
     ],
-    'Higiena': ['kosmetyki', 'higiena osobista', 'fryzjer', 'inne'],
-    'Transport': ['paliwo', 'parking', 'komunikacja miejska', 'taxi', 'serwis samochodu', 'inne'],
-    'Mieszkanie': ['prąd', 'gaz', 'woda', 'internet', 'telefon', 'czynsz', 'ogrzewanie', 'śmieci', 'inne'],
-    'Restauracje': ['restauracja', 'fast food', 'kawiarnia', 'cukiernia', 'inne'],
-    'Ubrania': ['odzież', 'obuwie', 'bielizna', 'naprawa ubrań', 'inne'],
-    'Zwierzęta': ['karma', 'weterynarz', 'leki', 'akcesoria', 'inne'],
-    'Hobby': ['książki', 'ogród', 'rękodzieło', 'sport', 'elektronika', 'prasa', 'inne'],
-    'Rodzina': ['dzieci', 'wnuki', 'prezenty', 'uroczystości', 'inne'],
-    'Wydarzenia': ['pielgrzymki', 'rekolekcje', 'spotkania wspólnoty', 'konferencje', 'wyjazdy', 'wolontariat', 'inne'],
-    'Finanse': ['bank', 'ubezpieczenie', 'podatki', 'opłata', 'inne'],
-    'Darowizny': ['kościół', 'wspólnota', 'fundacja', 'rodzina', 'inne'],
-    'Edukacja': ['studia', 'kursy', 'książki', 'szkolenia', 'inne'],
-    'Subskrypcje': ['internetowe', 'streaming', 'oprogramowanie', 'aplikacje', 'inne'],
-    'Hazard': ['lotto', 'zakłady sportowe', 'kasyno', 'poker', 'automaty', 'gry online', 'inne'],
-    'Alkohol': ['piwo', 'wino', 'mocny alkohol', 'likier', 'cydr', 'drinki', 'inne'],
-    'Inne': ['inne'],
+    'Higiena': ['kosmetyki', 'higiena osobista', 'fryzjer'],
+    'Transport': ['paliwo', 'parking', 'komunikacja miejska', 'taxi', 'serwis samochodu'],
+    'Mieszkanie': ['prąd', 'gaz', 'woda', 'internet', 'telefon', 'czynsz', 'ogrzewanie', 'śmieci'],
+    'Restauracje': ['restauracja', 'fast food', 'kawiarnia', 'cukiernia'],
+    'Ubrania': ['odzież', 'obuwie', 'bielizna', 'naprawa ubrań'],
+    'Zwierzęta': ['karma', 'weterynarz', 'leki', 'akcesoria'],
+    'Hobby': ['książki', 'ogród', 'rękodzieło', 'sport', 'elektronika', 'prasa'],
+    'Rodzina': ['dzieci', 'wnuki', 'prezenty', 'uroczystości'],
+    'Wydarzenia': ['pielgrzymki', 'rekolekcje', 'spotkania wspólnoty', 'konferencje', 'wyjazdy', 'wolontariat'],
+    'Finanse': ['bank', 'ubezpieczenie', 'podatki', 'opłata'],
+    'Darowizny': ['kościół', 'wspólnota', 'fundacja', 'rodzina'],
+    'Edukacja': ['studia', 'kursy', 'książki', 'szkolenia'],
+    'Subskrypcje': ['internetowe', 'streaming', 'oprogramowanie', 'aplikacje'],
+    'Hazard': ['lotto', 'zakłady sportowe', 'kasyno', 'poker', 'automaty', 'gry online'],
+    'Alkohol': ['piwo', 'wino', 'mocny alkohol', 'likier', 'cydr', 'drinki'],
+    'Opakowania i torby': ['reklamówki', 'torby papierowe', 'torby wielorazowe', 'opakowania', 'pojemniki'],
+    'Opłaty techniczne': ['kaucja', 'depozyt', 'opłata serwisowa', 'opłata manipulacyjna', 'opłata dostawy'],
+    'Promocje i korekty': ['rabat', 'kupon', 'zwrot', 'korekta ceny', 'zaokrąglenie'],
+    'Usługi': ['usługi sklepowe', 'naprawy', 'czyszczenie', 'drukowanie', 'dorabianie kluczy'],
+    'Biuro i papiernicze': ['papier', 'artykuły piśmiennicze', 'druk', 'koperty', 'organizacja dokumentów'],
+    'Elektronika i akcesoria': ['baterie', 'kable', 'ładowarki', 'akcesoria telefoniczne', 'akcesoria komputerowe'],
+    'Prezenty': ['upominki', 'kartki okolicznościowe', 'pakowanie prezentów'],
+    'Podróże': ['noclegi', 'bilety', 'bagaż', 'ubezpieczenie podróżne'],
+    'Administracyjne': ['urząd', 'poczta', 'mandaty', 'dokumenty'],
+    'Nieczytelne pozycje': ['pozycja nieczytelna', 'skrót nierozpoznany', 'produkt niejednoznaczny'],
 }
 
 BANK_TRANSACTION_CATEGORIES = RECEIPT_CATEGORIES | {
-    'Przychody': ['wynagrodzenie', 'emerytura', 'renta', 'zwrot', 'darowizna otrzymana', 'sprzedaż', 'inne'],
-    'Przelewy wewnętrzne': ['konto własne', 'oszczędności', 'walutowe', 'inne'],
+    'Przychody': ['wynagrodzenie', 'emerytura', 'renta', 'zwrot', 'darowizna otrzymana', 'sprzedaż'],
+    'Przelewy wewnętrzne': ['konto własne', 'oszczędności', 'walutowe'],
 }
 
 
