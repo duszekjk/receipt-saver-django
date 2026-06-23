@@ -280,3 +280,7 @@ def register_admin_dashboard(admin_site):
         ] + original_get_urls()
 
     admin_site.get_urls = get_urls
+
+
+def install_receipts_admin_dashboard(admin_site=admin.site):
+    register_admin_dashboard(admin_site)
