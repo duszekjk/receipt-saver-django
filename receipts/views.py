@@ -32,11 +32,14 @@ def visible_receipts(user):
 
 def visible_bank_transactions(user):
     if user.is_superuser:
-        return BankTransaction.objects.all()
-    family = user_family(user)
-    if family:
-        return BankTransaction.objects.filter(Q(family=family) | Q(user=user)).distinct()
-    return BankTransaction.objects.filter(user=user)
+        qs = BankTransaction.objects.all()
+    else:
+        family = user_family(user)
+        if family:
+            qs = BankTransaction.objects.filter(Q(family=family) | Q(user=user)).distinct()
+        else:
+            qs = BankTransaction.objects.filter(user=user)
+    return qs.exclude(transaction_type='internal_transfer')
 
 
 def rolling_start(period):
