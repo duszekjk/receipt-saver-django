@@ -8,7 +8,7 @@ from .utils import normalize_text
 
 
 HEADER_MARKERS = ['data transakcji', 'data ksiegowania', 'kwota transakcji']
-REVOLUT_HEADER_MARKERS = ['completed date', 'description', 'amount']
+REVOLUT_HEADER_MARKERS = ['type', 'product', 'started date', 'completed date', 'description', 'amount', 'currency', 'state', 'balance']
 
 
 def parse_date(value):
@@ -50,12 +50,18 @@ def find_header_line(lines, bank=''):
     markers = REVOLUT_HEADER_MARKERS if bank == 'revolut' else HEADER_MARKERS
     for index, line in enumerate(lines):
         normalized = normalize_text(line)
-        if all(marker in normalized for marker in markers):
-            return index
-        if bank == 'revolut' and 'started date' in normalized and 'description' in normalized and 'amount' in normalized:
-            return index
-        if 'data transakcji' in normalized and 'kwota' in normalized:
-            return index
+        if bank == 'revolut':
+            if all(marker in normalized for marker in markers):
+                return index
+            if 'completed date' in normalized and 'description' in normalized and 'amount' in normalized:
+                return index
+            if 'started date' in normalized and 'description' in normalized and 'amount' in normalized:
+                return index
+        else:
+            if all(marker in normalized for marker in markers):
+                return index
+            if 'data transakcji' in normalized and 'kwota' in normalized:
+                return index
     return 0
 
 
@@ -173,14 +179,17 @@ def parse_revolut_statement_row(row):
     currency = clean_currency(pick(row, 'Currency', 'Account Currency', 'Account currency'))
     description = str(pick(row, 'Description', 'Reference', 'Merchant')).strip()
     transaction_type = str(pick(row, 'Type')).strip()
+    product = str(pick(row, 'Product')).strip()
     state = str(pick(row, 'State')).strip()
     fee = pick(row, 'Fee')
     balance = pick(row, 'Balance')
     parsed_amount = parse_amount(amount)
     parsed_date = parse_date(date_value)
+    if state and state.upper() != 'COMPLETED':
+        return None
     if not parsed_date or parsed_amount == 0:
         return None
-    desc_parts = [description, transaction_type, state]
+    desc_parts = [description, transaction_type, product, state]
     desc = ' '.join(part for part in desc_parts if part)
     return {
         'booked_at': parsed_date,
@@ -190,7 +199,7 @@ def parse_revolut_statement_row(row):
         'raw_description': desc,
         'amount': parsed_amount,
         'currency': currency,
-        'raw_row': row | {'_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or '')},
+        'raw_row': row | {'_revolut_type': transaction_type, '_revolut_product': product, '_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or '')},
     }
 
 
