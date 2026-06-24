@@ -151,6 +151,38 @@ class BankTransaction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class BankImportJob(models.Model):
+    STATUS_QUEUED = 'queued'
+    STATUS_RUNNING = 'running'
+    STATUS_COMPLETED = 'completed'
+    STATUS_FAILED = 'failed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
+    bank = models.CharField(max_length=32, default='unknown')
+    source_file = models.FileField(upload_to='bank_imports/%Y/%m/')
+    source_file_name = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=24, choices=[
+        (STATUS_QUEUED, 'Queued'),
+        (STATUS_RUNNING, 'Running'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_FAILED, 'Failed'),
+    ], default=STATUS_QUEUED, db_index=True)
+    progress_current = models.PositiveIntegerField(default=0)
+    progress_total = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    classified_count = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.bank} import {self.id} {self.status}'
+
+
 class MatchCandidate(models.Model):
     receipt = models.ForeignKey(Receipt, on_delete=models.CASCADE)
     bank_transaction = models.ForeignKey(BankTransaction, on_delete=models.CASCADE)
