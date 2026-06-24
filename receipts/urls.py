@@ -13,6 +13,7 @@ urlpatterns = [
     path('receipts/scan/', scan_receipt),
     path('bank/statement/', bank_import_views.import_bank_statement),
     path('bank/import/', bank_import_views.import_bank_statement),
+    path('bank/import/status/<str:job_id>/', bank_import_views.bank_import_status),
     path('summaries/', summaries),
     path('matches/review/', match_candidates),
     path('', include(router.urls)),
