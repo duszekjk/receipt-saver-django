@@ -33,14 +33,28 @@ def import_bank_statement(request):
     return Response(serialize_bank_import_job(job), status=202)
 
 
+def _visible_jobs_for_user(user):
+    qs = BankImportJob.objects.all()
+    if not user.is_superuser:
+        qs = qs.filter(user=user)
+    return qs
+
+
+@api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
+@permission_classes([permissions.IsAuthenticated])
+def latest_bank_import_status(request):
+    job = _visible_jobs_for_user(request.user).order_by('-created_at').first()
+    if not job:
+        return Response({'detail': 'Import job not found'}, status=404)
+    return Response(serialize_bank_import_job(job))
+
+
 @api_view(['GET'])
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def bank_import_status(request, job_id):
-    qs = BankImportJob.objects.filter(id=job_id)
-    if not request.user.is_superuser:
-        qs = qs.filter(user=request.user)
-    job = qs.first()
+    job = _visible_jobs_for_user(request.user).filter(id=job_id).first()
     if not job:
         return Response({'detail': 'Import job not found'}, status=404)
     return Response(serialize_bank_import_job(job))
