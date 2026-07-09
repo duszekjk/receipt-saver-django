@@ -39,6 +39,11 @@ def _number(value):
         return None
 
 
+def _code(value):
+    value = ''.join(ch for ch in str(value or '').strip() if ch.isalnum())
+    return value[:128]
+
+
 SYSTEM_PROMPT = f'''
 Jesteś parserem polskich paragonów i ekspertem od klasyfikacji produktów z polskich sklepów.
 Zwracasz wyłącznie poprawny JSON zgodny ze schematem. Nie dodajesz komentarzy poza JSON.
@@ -48,9 +53,10 @@ Najważniejsza zasada: jeden obraz paragonu opisuje jeden paragon, a cały parag
 Twoje zadania:
 1. Oceń, czy obraz jest wystarczająco czytelny do wiarygodnego odczytania pozycji paragonu. Jeśli nie, ustaw scan_status na unreadable_receipt i krótko opisz problem w scan_error.
 2. Odczytaj sklep, jedną datę i godzinę całego paragonu, sumę, walutę, metodę płatności oraz — jeśli jest widoczny — identyfikator karty, najlepiej ostatnie 4 cyfry w payment_card_last4.
-3. Odczytaj wszystkie pozycje paragonu: nazwę produktu, ilość, cenę jednostkową, cenę zapłaconą, cenę regularną, rabat, nazwę promocji i informację, czy produkt był przeceniony.
-4. Dla każdej pozycji wybierz category i subcategory wyłącznie z listy dozwolonych kategorii poniżej.
-5. Zachowaj i odtwarzaj polskie znaki w nazwach produktów, kategorii i podkategorii.
+3. Odczytaj kod kreskowy / numer systemowy paragonu do receipt_barcode, jeśli jest widoczny i jednoznaczny. To ma być kod identyfikujący cały paragon, a nie NIP sklepu, numer terminala, numer karty ani numer produktu. Jeśli nie masz pewności, zwróć pusty string.
+4. Odczytaj wszystkie pozycje paragonu.
+5. Dla każdej pozycji wybierz category i subcategory wyłącznie z listy dozwolonych kategorii poniżej.
+6. Zachowaj i odtwarzaj polskie znaki w nazwach produktów, kategorii i podkategorii.
 
 Zasady daty:
 - purchased_at jest jedyną datą całego paragonu. Wszystkie produkty należą do tej jednej daty.
@@ -75,12 +81,6 @@ Zasady klasyfikacji:
 
 Przykłady: jaja -> Żywność / jaja; żelatyna -> Żywność / dodatki do pieczenia; mąka -> Żywność / produkty sypkie; miód -> Żywność / miód; róże -> Dom / kwiaty; reklamówka -> Opakowania i torby / reklamówki.
 
-Ważne zasady cen:
-- paid_price to cena faktycznie zapłacona za pozycję.
-- regular_price to cena bez promocji, jeśli jest możliwa do rozpoznania.
-- discount_amount to oszczędność na pozycji, jeśli jest możliwa do rozpoznania, w przeciwnym razie 0.00.
-- Jeżeli nie widać ilości, quantity może być null. Jeżeli nie widać ceny jednostkowej, unit_price może być null.
-
 Dozwolone kategorie i podkategorie — nie wolno pominąć tej listy i nie wolno tworzyć nic poza nią:
 {allowed_categories_prompt_text()}
 '''
@@ -93,6 +93,7 @@ JSON_SCHEMA = {
             'scan_status': {'type': 'string', 'enum': ['ok', 'unreadable_receipt', 'unreadable_date']},
             'scan_error': {'type': 'string'},
             'merchant_name': {'type': 'string'},
+            'receipt_barcode': {'type': 'string'},
             'purchased_at': {'type': ['string', 'null']},
             'total_amount': {'type': ['number', 'string', 'null']},
             'currency': {'type': 'string'},
@@ -105,7 +106,7 @@ JSON_SCHEMA = {
                 'category': {'type': 'string'}, 'subcategory': {'type': 'string'},
             }, 'required': ['name', 'quantity', 'unit_price', 'paid_price', 'regular_price', 'discount_amount', 'promotion_name', 'is_discounted', 'category', 'subcategory']}}
         },
-        'required': ['scan_status', 'scan_error', 'merchant_name', 'purchased_at', 'total_amount', 'currency', 'payment_method', 'payment_card_last4', 'items']
+        'required': ['scan_status', 'scan_error', 'merchant_name', 'receipt_barcode', 'purchased_at', 'total_amount', 'currency', 'payment_method', 'payment_card_last4', 'items']
     }, 'strict': True,
 }
 
@@ -139,16 +140,22 @@ def _clean_response(data):
     error = (data.get('scan_error') or '').strip()
     if status == 'unreadable_receipt':
         raise ReceiptUnreadableError(error or 'Paragon jest nieczytelny. Zrób wyraźniejsze zdjęcie i spróbuj ponownie.')
-    if status == 'unreadable_date':
-        raise ReceiptDateUnreadableError(error or 'Data paragonu jest nieczytelna. Wpisz datę zakupu ręcznie.')
     items = data.get('items') or []
     if not isinstance(items, list) or not items:
         raise ReceiptUnreadableError('Nie udało się wiarygodnie odczytać pozycji paragonu. Zrób wyraźniejsze zdjęcie.')
-    return {'merchant_name': data.get('merchant_name') or '', 'purchased_at': _validate_date(data.get('purchased_at')), 'total_amount': _money(data.get('total_amount')), 'currency': data.get('currency') or 'PLN', 'payment_method': data.get('payment_method') or 'unknown', 'payment_card_last4': data.get('payment_card_last4'), 'items': [_clean_item(item) for item in items if isinstance(item, dict)]}
+    cleaned = {'scan_status': status or 'ok', 'scan_error': error, 'merchant_name': data.get('merchant_name') or '', 'receipt_barcode': _code(data.get('receipt_barcode')), 'purchased_at': None, 'total_amount': _money(data.get('total_amount')), 'currency': data.get('currency') or 'PLN', 'payment_method': data.get('payment_method') or 'unknown', 'payment_card_last4': data.get('payment_card_last4'), 'items': [_clean_item(item) for item in items if isinstance(item, dict)]}
+    if status == 'unreadable_date':
+        return cleaned
+    try:
+        cleaned['purchased_at'] = _validate_date(data.get('purchased_at'))
+    except ReceiptDateUnreadableError as error:
+        cleaned['scan_status'] = 'unreadable_date'
+        cleaned['scan_error'] = str(error)
+    return cleaned
 
 
 def _call_openai(client, b64, extra_instruction=''):
-    user_text = 'Przeanalizuj jeden cały paragon. Ustal jedną datę dla całego paragonu; produkty nie mają osobnych dat. Nie zgaduj daty ani nie bierz roku z kodów lub stopki. Jeśli obraz jest nieczytelny zwróć unreadable_receipt. Jeśli pozycje są czytelne, ale data nie, zwróć unreadable_date. Odczytaj końcówkę karty, jeśli jest widoczna. Dodaj polskie znaki z kontekstu. Każda pozycja musi mieć kategorię i podkategorię z listy.'
+    user_text = 'Przeanalizuj jeden cały paragon. Ustal jedną datę dla całego paragonu; produkty nie mają osobnych dat. Nie zgaduj daty ani nie bierz roku z kodów lub stopki. Jeśli obraz jest nieczytelny zwróć unreadable_receipt. Jeśli pozycje są czytelne, ale data nie, zwróć unreadable_date. Odczytaj końcówkę karty oraz kod kreskowy/numer systemowy paragonu, jeśli są widoczne. Dodaj polskie znaki z kontekstu. Każda pozycja musi mieć kategorię i podkategorię z listy.'
     if extra_instruction:
         user_text += '\n\nPoprzedni wynik był niepoprawny. Popraw wynik na podstawie tego samego obrazu, nie zgaduj brakujących danych. Błąd walidacji: ' + extra_instruction
     response = client.chat.completions.create(model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'), messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': [{'type': 'text', 'text': user_text}, {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}}]}], response_format={'type': 'json_schema', 'json_schema': JSON_SCHEMA}, temperature=0)
@@ -165,8 +172,6 @@ def parse_receipt_image(image_path: str) -> dict:
             data = _call_openai(client, b64, str(last_error) if last_error else '')
             return _clean_response(data)
         except ReceiptUnreadableError:
-            raise
-        except ReceiptDateUnreadableError:
             raise
         except (ValueError, ReceiptParseError, json.JSONDecodeError) as error:
             last_error = error
