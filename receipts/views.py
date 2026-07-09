@@ -7,7 +7,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
-from .authentication import AppHMACAuthentication
+from .authentication import AppTokenAuthentication
 from .bank_parsers import parse_bank_csv
 from .models import BankTransaction, MatchCandidate, Receipt
 from .openai_bank_transactions import BankClassificationError, classify_bank_statement_rows
@@ -16,7 +16,7 @@ from .serializers import MatchCandidateSerializer, ReceiptSerializer
 from .services import create_receipt_from_image, match_bank_transactions_for_receipt
 from .utils import normalize_text
 
-API_AUTHENTICATION = [AppHMACAuthentication]
+API_AUTHENTICATION = [AppTokenAuthentication]
 
 
 def user_family(user):
