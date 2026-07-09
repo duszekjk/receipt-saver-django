@@ -7,8 +7,9 @@ from .openai_receipts import parse_receipt_image
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
 
-MIN_REVIEW_SCORE = 0.40
-AUTO_MATCH_SCORE = 0.92
+MIN_REVIEW_SCORE = 0.75
+AUTO_MATCH_SCORE = 0.98
+AMOUNT_TOLERANCE = Decimal('0.01')
 
 
 def user_family(user):
@@ -91,27 +92,64 @@ def find_duplicate_receipt(receipt: Receipt):
     return best if best_score >= 0.85 else None
 
 
+def _amount_exact(receipt: Receipt, tx: BankTransaction):
+    if receipt.total_amount is None or tx.amount is None:
+        return False
+    return abs(Decimal(receipt.total_amount) - abs(Decimal(tx.amount))) <= AMOUNT_TOLERANCE
+
+
+def _date_score(receipt: Receipt, tx: BankTransaction):
+    if not receipt.purchased_at or not (tx.transaction_at or tx.booked_at):
+        return 0.0, None
+    bank_date = tx.transaction_at or tx.booked_at
+    delta_days = (bank_date - receipt.purchased_at.date()).days
+    if delta_days == 0:
+        return 1.0, delta_days
+    if delta_days == 1:
+        return 0.85, delta_days
+    return 0.0, delta_days
+
+
 def match_score(receipt: Receipt, tx: BankTransaction):
     if tx.amount >= 0:
         return 0.0, {'ignored': 'income_or_neutral_transaction'}
-    amount = money_similarity(receipt.total_amount, abs(tx.amount), Decimal('0.50'))
-    date_score = 0.0
-    if receipt.purchased_at and (tx.transaction_at or tx.booked_at):
-        bank_date = tx.transaction_at or tx.booked_at
-        delta_days = (bank_date - receipt.purchased_at.date()).days
-        if -2 <= delta_days <= 10:
-            date_score = 1.0 - min(abs(delta_days), 10) / 10.0
+    if not _amount_exact(receipt, tx):
+        return 0.0, {
+            'ignored': 'amount_not_exact',
+            'bank_amount': str(tx.amount),
+            'expense_amount': str(abs(tx.amount)),
+            'receipt_amount': str(receipt.total_amount),
+        }
+    date_score, delta_days = _date_score(receipt, tx)
+    if date_score <= 0:
+        return 0.0, {
+            'ignored': 'date_outside_exact_window',
+            'delta_days': delta_days,
+            'bank_date': str(tx.transaction_at or tx.booked_at or ''),
+            'receipt_datetime': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
+        }
     merchant = text_similarity(receipt.merchant_name, tx.merchant_name or tx.raw_description)
     payment = 1.0 if 'kart' in (receipt.payment_method or '').lower() else 0.7
-    score = 0.60 * amount + 0.25 * date_score + 0.10 * merchant + 0.05 * payment
-    return score, {'amount': amount, 'date_window': date_score, 'merchant': merchant, 'payment': payment, 'bank_amount': str(tx.amount), 'expense_amount': str(abs(tx.amount))}
+    score = 0.65 + 0.20 * date_score + 0.10 * merchant + 0.05 * payment
+    return score, {
+        'amount_exact': True,
+        'date_window': date_score,
+        'delta_days': delta_days,
+        'merchant': merchant,
+        'payment': payment,
+        'bank_amount': str(tx.amount),
+        'expense_amount': str(abs(tx.amount)),
+        'receipt_amount': str(receipt.total_amount),
+        'bank_date': str(tx.transaction_at or tx.booked_at or ''),
+        'receipt_datetime': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
+    }
 
 
 def match_bank_transactions_for_receipt(receipt: Receipt):
     if not receipt.total_amount or not receipt.purchased_at:
         return []
-    start = receipt.purchased_at.date() - timedelta(days=2)
-    end = receipt.purchased_at.date() + timedelta(days=10)
+    start = receipt.purchased_at.date()
+    end = receipt.purchased_at.date() + timedelta(days=1)
     candidates = BankTransaction.objects.filter(matched_receipt__isnull=True, booked_at__range=[start, end], amount__lt=0)
     if receipt.family_id:
         candidates = candidates.filter(family=receipt.family)
