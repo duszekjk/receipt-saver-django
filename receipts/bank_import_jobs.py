@@ -1,5 +1,6 @@
 import logging
-from django.db import transaction
+import time
+from django.db import OperationalError, close_old_connections, transaction
 from django.utils import timezone
 from .bank_parsers import parse_bank_csv
 from .models import BankImportJob, BankTransaction
@@ -12,6 +13,8 @@ from .views import visible_receipts
 logger = logging.getLogger(__name__)
 
 BACKGROUND_IMPORT_TIMEOUT_SECONDS = 60 * 60
+DB_LOCK_RETRIES = 12
+DB_LOCK_SLEEP_SECONDS = 0.5
 
 
 def serialize_bank_import_job(job):
@@ -30,11 +33,36 @@ def serialize_bank_import_job(job):
     }
 
 
+def _is_locked(error):
+    return 'database is locked' in str(error).lower() or 'database table is locked' in str(error).lower()
+
+
+def _with_db_retry(operation):
+    close_old_connections()
+    last_error = None
+    for attempt in range(DB_LOCK_RETRIES):
+        try:
+            result = operation()
+            close_old_connections()
+            return result
+        except OperationalError as error:
+            last_error = error
+            close_old_connections()
+            if not _is_locked(error) or attempt == DB_LOCK_RETRIES - 1:
+                raise
+            time.sleep(DB_LOCK_SLEEP_SECONDS * (attempt + 1))
+    raise last_error
+
+
+def _save_job(job, update_fields):
+    return _with_db_retry(lambda: job.save(update_fields=update_fields))
+
+
 def _mark_failed(job, error):
     job.status = BankImportJob.STATUS_FAILED
     job.error_message = str(error)
     job.finished_at = timezone.now()
-    job.save(update_fields=['status', 'error_message', 'finished_at', 'updated_at'])
+    _save_job(job, ['status', 'error_message', 'finished_at', 'updated_at'])
 
 
 def _allow_long_background_openai_calls():
@@ -77,32 +105,8 @@ def _remove_existing_exact_duplicates(job):
     return len(duplicate_ids)
 
 
-def process_bank_import_job(job_id):
-    job = BankImportJob.objects.select_related('user', 'family').get(id=job_id)
-    if job.status not in [BankImportJob.STATUS_QUEUED, BankImportJob.STATUS_RUNNING]:
-        return job
-
-    job.status = BankImportJob.STATUS_RUNNING
-    job.started_at = job.started_at or timezone.now()
-    job.error_message = ''
-    job.save(update_fields=['status', 'started_at', 'error_message', 'updated_at'])
-
-    try:
-        _allow_long_background_openai_calls()
-        with job.source_file.open('rb') as file_obj:
-            file_obj.name = job.source_file_name or job.source_file.name
-            parsed_rows = list(parse_bank_csv(file_obj, job.bank))
-        if not parsed_rows:
-            raise BankClassificationError('Nie znaleziono żadnych transakcji w pliku wyciągu.')
-
-        job.progress_total = len(parsed_rows)
-        job.progress_current = 0
-        job.save(update_fields=['progress_total', 'progress_current', 'updated_at'])
-
-        classifications = openai_bank_transactions.classify_bank_statement_rows(job.bank, parsed_rows)
-        if len(classifications) != len(parsed_rows):
-            raise BankClassificationError('Liczba klasyfikacji nie zgadza się z liczbą transakcji.')
-
+def _store_import_result(job, parsed_rows, classifications):
+    def operation():
         with transaction.atomic():
             _remove_existing_exact_duplicates(job)
             created = 0
@@ -111,14 +115,7 @@ def process_bank_import_job(job_id):
                 existing = BankTransaction.objects.filter(**_transaction_identity_filter(job, row)).order_by('id').first()
                 if existing:
                     continue
-
-                tx = BankTransaction.objects.create(
-                    user=job.user,
-                    family=job.family,
-                    bank=job.bank,
-                    source_file_name=job.source_file_name,
-                    **row,
-                )
+                tx = BankTransaction.objects.create(user=job.user, family=job.family, bank=job.bank, source_file_name=job.source_file_name, **row)
                 tx.corrected_description = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
                 tx.merchant_name = tx.merchant_name or data.get('merchant_name') or ''
                 tx.merchant_normalized = normalize_text(tx.merchant_name)
@@ -130,10 +127,8 @@ def process_bank_import_job(job_id):
                 tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
                 created += 1
                 classified += 1
-
             for receipt in visible_receipts(job.user).filter(duplicate_of__isnull=True):
                 match_bank_transactions_for_receipt(receipt)
-
             job.status = BankImportJob.STATUS_COMPLETED
             job.progress_current = len(parsed_rows)
             job.created_count = created
@@ -141,7 +136,41 @@ def process_bank_import_job(job_id):
             job.error_message = ''
             job.finished_at = timezone.now()
             job.save(update_fields=['status', 'progress_current', 'created_count', 'classified_count', 'error_message', 'finished_at', 'updated_at'])
+            return created, classified
+    return _with_db_retry(operation)
+
+
+def process_bank_import_job(job_id):
+    close_old_connections()
+    job = _with_db_retry(lambda: BankImportJob.objects.select_related('user', 'family').get(id=job_id))
+    if job.status not in [BankImportJob.STATUS_QUEUED, BankImportJob.STATUS_RUNNING]:
+        return job
+
+    job.status = BankImportJob.STATUS_RUNNING
+    job.started_at = job.started_at or timezone.now()
+    job.error_message = ''
+    _save_job(job, ['status', 'started_at', 'error_message', 'updated_at'])
+
+    try:
+        _allow_long_background_openai_calls()
+        with job.source_file.open('rb') as file_obj:
+            file_obj.name = job.source_file_name or job.source_file.name
+            parsed_rows = list(parse_bank_csv(file_obj, job.bank))
+        if not parsed_rows:
+            raise BankClassificationError('Nie znaleziono żadnych transakcji w pliku wyciągu.')
+
+        job.progress_total = len(parsed_rows)
+        job.progress_current = 0
+        _save_job(job, ['progress_total', 'progress_current', 'updated_at'])
+
+        classifications = openai_bank_transactions.classify_bank_statement_rows(job.bank, parsed_rows)
+        if len(classifications) != len(parsed_rows):
+            raise BankClassificationError('Liczba klasyfikacji nie zgadza się z liczbą transakcji.')
+
+        _store_import_result(job, parsed_rows, classifications)
     except Exception as error:
         logger.exception('Bank import job failed: %s', job.id)
         _mark_failed(job, error)
+    finally:
+        close_old_connections()
     return job
