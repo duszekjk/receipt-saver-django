@@ -74,10 +74,40 @@ def _expense_rows(user, start, end):
     receipt_items = []
     for receipt in visible_receipts(user).filter(duplicate_of__isnull=True, purchased_at__gte=receipt_start, purchased_at__lt=receipt_end).prefetch_related('items'):
         for item in receipt.items.all():
-            receipt_items.append({'name': item.name, 'merchant': receipt.merchant_name, 'category': item.category or 'Bez kategorii', 'subcategory': item.subcategory or 'Bez podkategorii', 'spent': float(item.paid_price or 0), 'saved': float(item.discount_amount or 0)})
+            receipt_items.append({
+                'name': item.name,
+                'merchant': receipt.merchant_name,
+                'category': item.category or 'Bez kategorii',
+                'subcategory': item.subcategory or 'Bez podkategorii',
+                'spent': float(item.paid_price or 0),
+                'saved': float(item.discount_amount or 0),
+                'source': 'receipt',
+                'date': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
+                'receipt_id': receipt.id,
+                'quantity': float(item.quantity) if item.quantity is not None else None,
+                'unit_price': float(item.unit_price) if item.unit_price is not None else None,
+                'regular_price': float(item.regular_price) if item.regular_price is not None else None,
+                'discount_amount': float(item.discount_amount or 0),
+                'promotion_name': item.promotion_name or '',
+            })
     standalone = []
     for tx in visible_bank_transactions(user).filter(booked_at__gte=start, booked_at__lt=end, matched_receipt__isnull=True, amount__lt=0).exclude(transaction_type__in=['internal_transfer', 'neutral']):
-        standalone.append({'name': tx.corrected_description or tx.merchant_name or tx.raw_description, 'merchant': tx.merchant_name or tx.corrected_description or 'Transakcja bankowa', 'category': tx.category or 'Bez kategorii', 'subcategory': tx.subcategory or 'Bez podkategorii', 'spent': float(abs(tx.amount)), 'saved': 0.0})
+        standalone.append({
+            'name': tx.corrected_description or tx.merchant_name or tx.raw_description,
+            'merchant': tx.merchant_name or tx.corrected_description or 'Transakcja bankowa',
+            'category': tx.category or 'Bez kategorii',
+            'subcategory': tx.subcategory or 'Bez podkategorii',
+            'spent': float(abs(tx.amount)),
+            'saved': 0.0,
+            'source': 'bank',
+            'date': (tx.transaction_at or tx.booked_at).isoformat() if (tx.transaction_at or tx.booked_at) else '',
+            'receipt_id': None,
+            'quantity': None,
+            'unit_price': None,
+            'regular_price': None,
+            'discount_amount': 0.0,
+            'promotion_name': '',
+        })
     return receipt_items + standalone
 
 
@@ -91,6 +121,36 @@ def _group(rows, key, limit=None):
         current['count'] += 1
     result = sorted(grouped.values(), key=lambda row: row['spent'], reverse=True)
     return result[:limit] if limit else result
+
+
+def _group_with_details(rows, key):
+    grouped = {}
+    for row in rows:
+        name = row[key]
+        current = grouped.setdefault(name, {'name': name, 'merchant': '', 'spent': 0.0, 'saved': 0.0, 'count': 0, 'source': 'mixed', 'details': []})
+        current['spent'] += row['spent']
+        current['saved'] += row['saved']
+        current['count'] += 1
+        if not current['merchant'] and row.get('merchant'):
+            current['merchant'] = row['merchant']
+        detail = {
+            'name': row.get('name') or '',
+            'merchant': row.get('merchant') or '',
+            'spent': row.get('spent') or 0.0,
+            'saved': row.get('saved') or 0.0,
+            'source': row.get('source') or '',
+            'date': row.get('date') or '',
+            'receipt_id': row.get('receipt_id'),
+            'quantity': row.get('quantity'),
+            'unit_price': row.get('unit_price'),
+            'regular_price': row.get('regular_price'),
+            'discount_amount': row.get('discount_amount') or 0.0,
+            'promotion_name': row.get('promotion_name') or '',
+        }
+        current['details'].append(detail)
+    for row in grouped.values():
+        row['details'] = sorted(row['details'], key=lambda item: item.get('date') or '', reverse=True)
+    return sorted(grouped.values(), key=lambda row: row['spent'], reverse=True)
 
 
 def _get_visible_receipt(user, receipt_id):
@@ -135,7 +195,8 @@ def dashboard_subcategory_details(request):
     start, end = _period_bounds('month', request.GET.get('month', ''))
     subcategory = request.GET.get('subcategory', '')
     rows = [row for row in _expense_rows(request.user, start, end) if row['subcategory'] == subcategory]
-    return Response({'month': start.strftime('%Y-%m'), 'subcategory': subcategory, 'products': _group(rows, 'name'), 'total_spent': sum(row['spent'] for row in rows), 'total_saved': sum(row['saved'] for row in rows)})
+    products = _group_with_details(rows, 'name')
+    return Response({'month': start.strftime('%Y-%m'), 'subcategory': subcategory, 'items': products, 'products': products, 'total_spent': sum(row['spent'] for row in rows), 'total_saved': sum(row['saved'] for row in rows)})
 
 
 @api_view(['GET'])
