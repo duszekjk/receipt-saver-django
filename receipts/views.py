@@ -3,6 +3,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth, TruncQuarter, TruncYear
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
@@ -10,7 +11,7 @@ from .authentication import AppHMACAuthentication
 from .bank_parsers import parse_bank_csv
 from .models import BankTransaction, MatchCandidate, Receipt
 from .openai_bank_transactions import BankClassificationError, classify_bank_statement_rows
-from .openai_receipts import ReceiptDateUnreadableError, ReceiptParseError, ReceiptUnreadableError
+from .openai_receipts import ReceiptParseError, ReceiptUnreadableError
 from .serializers import MatchCandidateSerializer, ReceiptSerializer
 from .services import create_receipt_from_image, match_bank_transactions_for_receipt
 from .utils import normalize_text
@@ -92,6 +93,22 @@ def _group(rows, key, limit=None):
     return result[:limit] if limit else result
 
 
+def _get_visible_receipt(user, receipt_id):
+    return visible_receipts(user).filter(id=receipt_id).first()
+
+
+def _parse_manual_datetime(value):
+    parsed = parse_datetime(value or '')
+    if not parsed:
+        try:
+            parsed = datetime.combine(date.fromisoformat(value or ''), time.min)
+        except (TypeError, ValueError):
+            return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
 @api_view(['GET'])
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
@@ -169,8 +186,6 @@ def scan_receipt(request):
         return Response({'detail': 'Brak zdjęcia paragonu.', 'code': 'missing_image'}, status=400)
     try:
         receipt = create_receipt_from_image(request.user, image)
-    except ReceiptDateUnreadableError as error:
-        return Response({'detail': str(error), 'code': 'receipt_date_unreadable', 'requires_manual_date': True}, status=422)
     except ReceiptUnreadableError as error:
         return Response({'detail': str(error), 'code': 'receipt_unreadable'}, status=422)
     except ReceiptParseError as error:
@@ -179,6 +194,37 @@ def scan_receipt(request):
     if family and not receipt.family_id:
         receipt.family = family
         receipt.save(update_fields=['family'])
+    payload = ReceiptSerializer(receipt).data
+    if not receipt.purchased_at and (receipt.raw_openai_json or {}).get('scan_status') == 'unreadable_date':
+        return Response({'detail': (receipt.raw_openai_json or {}).get('scan_error') or 'Data paragonu jest nieczytelna.', 'code': 'receipt_date_unreadable', 'requires_manual_date': True, 'receipt': payload}, status=202)
+    return Response(payload)
+
+
+@api_view(['POST'])
+@authentication_classes(API_AUTHENTICATION)
+@permission_classes([permissions.IsAuthenticated])
+def set_receipt_date(request, receipt_id):
+    receipt = _get_visible_receipt(request.user, receipt_id)
+    if not receipt:
+        return Response({'detail': 'Paragon nie istnieje.'}, status=404)
+    purchased_at = _parse_manual_datetime(request.data.get('purchased_at'))
+    if not purchased_at:
+        return Response({'detail': 'Niepoprawna data paragonu.'}, status=400)
+    now = timezone.now()
+    if purchased_at > now + timedelta(days=1):
+        return Response({'detail': 'Data paragonu nie może być z przyszłości.'}, status=400)
+    if purchased_at < now - timedelta(days=366):
+        return Response({'detail': 'Data paragonu jest starsza niż 12 miesięcy.'}, status=400)
+    receipt.purchased_at = purchased_at
+    raw = receipt.raw_openai_json or {}
+    raw['scan_status'] = 'ok'
+    raw['manual_purchased_at'] = purchased_at.isoformat()
+    receipt.raw_openai_json = raw
+    duplicate = None if receipt.duplicate_of_id else __import__('receipts.services', fromlist=['find_duplicate_receipt']).find_duplicate_receipt(receipt)
+    if duplicate:
+        receipt.duplicate_of = duplicate
+    receipt.save(update_fields=['purchased_at', 'raw_openai_json', 'duplicate_of'])
+    match_bank_transactions_for_receipt(receipt)
     return Response(ReceiptSerializer(receipt).data)
 
 
