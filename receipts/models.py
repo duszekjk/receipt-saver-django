@@ -56,11 +56,7 @@ class AppLoginToken(models.Model):
         super().save(*args, **kwargs)
 
     def qr_payload(self):
-        return {
-            'type': 'receipt_saver_login',
-            'device_id': str(self.device_id),
-            'secret_key': self.secret_key,
-        }
+        return {'type': 'receipt_saver_login', 'device_id': str(self.device_id), 'secret_key': self.secret_key}
 
     def mark_used(self):
         self.last_used_at = timezone.now()
@@ -86,6 +82,7 @@ class Receipt(models.Model):
     image = models.ImageField(upload_to='receipts/%Y/%m/')
     merchant_name = models.CharField(max_length=255, blank=True)
     merchant_normalized = models.CharField(max_length=255, blank=True, db_index=True)
+    receipt_barcode = models.CharField(max_length=128, blank=True, db_index=True)
     purchased_at = models.DateTimeField(null=True, blank=True, db_index=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=8, default='PLN')
@@ -138,12 +135,7 @@ class BankTransaction(models.Model):
     matched_receipt = models.ForeignKey(Receipt, null=True, blank=True, on_delete=models.SET_NULL)
     category = models.CharField(max_length=100, blank=True, db_index=True)
     subcategory = models.CharField(max_length=100, blank=True, db_index=True)
-    transaction_type = models.CharField(max_length=32, choices=[
-        (TRANSACTION_EXPENSE, 'Expense'),
-        (TRANSACTION_INCOME, 'Income'),
-        (TRANSACTION_INTERNAL, 'Internal transfer'),
-        (TRANSACTION_NEUTRAL, 'Neutral'),
-    ], blank=True, db_index=True)
+    transaction_type = models.CharField(max_length=32, choices=[(TRANSACTION_EXPENSE, 'Expense'), (TRANSACTION_INCOME, 'Income'), (TRANSACTION_INTERNAL, 'Internal transfer'), (TRANSACTION_NEUTRAL, 'Neutral')], blank=True, db_index=True)
     corrected_description = models.TextField(blank=True)
     classification_source = models.CharField(max_length=32, blank=True)
     raw_classification_json = models.JSONField(default=dict, blank=True)
@@ -163,12 +155,7 @@ class BankImportJob(models.Model):
     bank = models.CharField(max_length=32, default='unknown')
     source_file = models.FileField(upload_to='bank_imports/%Y/%m/')
     source_file_name = models.CharField(max_length=255, blank=True)
-    status = models.CharField(max_length=24, choices=[
-        (STATUS_QUEUED, 'Queued'),
-        (STATUS_RUNNING, 'Running'),
-        (STATUS_COMPLETED, 'Completed'),
-        (STATUS_FAILED, 'Failed'),
-    ], default=STATUS_QUEUED, db_index=True)
+    status = models.CharField(max_length=24, choices=[(STATUS_QUEUED, 'Queued'), (STATUS_RUNNING, 'Running'), (STATUS_COMPLETED, 'Completed'), (STATUS_FAILED, 'Failed')], default=STATUS_QUEUED, db_index=True)
     progress_current = models.PositiveIntegerField(default=0)
     progress_total = models.PositiveIntegerField(default=0)
     created_count = models.PositiveIntegerField(default=0)
@@ -188,11 +175,7 @@ class MatchCandidate(models.Model):
     bank_transaction = models.ForeignKey(BankTransaction, on_delete=models.CASCADE)
     score = models.FloatField()
     reason = models.JSONField(default=dict)
-    status = models.CharField(max_length=20, choices=[
-        ('auto_matched', 'Auto matched'),
-        ('needs_review', 'Needs review'),
-        ('rejected', 'Rejected'),
-    ])
+    status = models.CharField(max_length=20, choices=[('auto_matched', 'Auto matched'), ('needs_review', 'Needs review'), ('rejected', 'Rejected')])
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
