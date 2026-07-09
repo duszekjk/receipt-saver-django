@@ -35,6 +35,7 @@ def create_receipt_from_image(user, image_file) -> Receipt:
         purchased_at = timezone.make_aware(purchased_at, timezone.get_current_timezone())
     receipt.merchant_name = data.get('merchant_name') or ''
     receipt.merchant_normalized = normalize_text(receipt.merchant_name)
+    receipt.receipt_barcode = data.get('receipt_barcode') or ''
     receipt.purchased_at = purchased_at
     receipt.total_amount = data.get('total_amount')
     receipt.currency = data.get('currency') or 'PLN'
@@ -49,7 +50,8 @@ def create_receipt_from_image(user, image_file) -> Receipt:
     if duplicate:
         receipt.duplicate_of = duplicate
         receipt.save(update_fields=['duplicate_of'])
-    match_bank_transactions_for_receipt(receipt)
+    if receipt.purchased_at:
+        match_bank_transactions_for_receipt(receipt)
     return receipt
 
 
@@ -68,8 +70,13 @@ def receipt_similarity(a: Receipt, b: Receipt):
 
 
 def find_duplicate_receipt(receipt: Receipt):
-    qs = Receipt.objects.filter(total_amount__isnull=False).exclude(id=receipt.id)
+    qs = Receipt.objects.exclude(id=receipt.id)
     qs = qs.filter(family=receipt.family) if receipt.family_id else qs.filter(user=receipt.user)
+    if receipt.receipt_barcode:
+        barcode_duplicate = qs.filter(receipt_barcode=receipt.receipt_barcode).order_by('id').first()
+        if barcode_duplicate:
+            return barcode_duplicate
+    qs = qs.filter(total_amount__isnull=False)
     if receipt.purchased_at:
         qs = qs.filter(purchased_at__date__range=[receipt.purchased_at.date() - timedelta(days=1), receipt.purchased_at.date() + timedelta(days=1)])
     best, best_score = None, 0.0
