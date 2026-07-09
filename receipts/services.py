@@ -10,6 +10,8 @@ from .utils import build_receipt_fingerprint, money_similarity, normalize_text, 
 MIN_REVIEW_SCORE = 0.75
 AUTO_MATCH_SCORE = 0.98
 AMOUNT_TOLERANCE = Decimal('0.01')
+MIN_MERCHANT_REVIEW_SCORE = 0.35
+MIN_MERCHANT_AUTO_SCORE = 0.75
 
 
 def user_family(user):
@@ -111,37 +113,39 @@ def _date_score(receipt: Receipt, tx: BankTransaction):
 
 
 def match_score(receipt: Receipt, tx: BankTransaction):
+    base_reason = {
+        'bank_amount': str(tx.amount),
+        'expense_amount': str(abs(tx.amount)) if tx.amount is not None else '',
+        'receipt_amount': str(receipt.total_amount),
+        'bank_transaction_at': str(tx.transaction_at or ''),
+        'bank_booked_at': str(tx.booked_at or ''),
+        'receipt_datetime': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
+        'receipt_merchant': receipt.merchant_name or '',
+        'bank_merchant': tx.merchant_name or '',
+        'bank_description': tx.raw_description or '',
+    }
     if tx.amount >= 0:
-        return 0.0, {'ignored': 'income_or_neutral_transaction'}
+        return 0.0, {**base_reason, 'ignored': 'income_or_neutral_transaction'}
     if not _amount_exact(receipt, tx):
-        return 0.0, {
-            'ignored': 'amount_not_exact',
-            'bank_amount': str(tx.amount),
-            'expense_amount': str(abs(tx.amount)),
-            'receipt_amount': str(receipt.total_amount),
-        }
+        return 0.0, {**base_reason, 'ignored': 'amount_not_exact', 'amount_exact': False}
+
     date_score, delta_days = _date_score(receipt, tx)
     if date_score <= 0:
-        return 0.0, {
-            'ignored': 'date_outside_exact_window',
-            'delta_days': delta_days,
-            'bank_date': str(tx.transaction_at or tx.booked_at or ''),
-            'receipt_datetime': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
-        }
+        return 0.0, {**base_reason, 'ignored': 'date_outside_exact_window', 'amount_exact': True, 'delta_days': delta_days}
+
     merchant = text_similarity(receipt.merchant_name, tx.merchant_name or tx.raw_description)
+    if merchant < MIN_MERCHANT_REVIEW_SCORE:
+        return 0.0, {**base_reason, 'ignored': 'merchant_too_different', 'amount_exact': True, 'delta_days': delta_days, 'merchant': merchant}
+
     payment = 1.0 if 'kart' in (receipt.payment_method or '').lower() else 0.7
-    score = 0.65 + 0.20 * date_score + 0.10 * merchant + 0.05 * payment
+    score = 0.55 + 0.25 * date_score + 0.15 * merchant + 0.05 * payment
     return score, {
+        **base_reason,
         'amount_exact': True,
         'date_window': date_score,
         'delta_days': delta_days,
         'merchant': merchant,
         'payment': payment,
-        'bank_amount': str(tx.amount),
-        'expense_amount': str(abs(tx.amount)),
-        'receipt_amount': str(receipt.total_amount),
-        'bank_date': str(tx.transaction_at or tx.booked_at or ''),
-        'receipt_datetime': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
     }
 
 
@@ -159,7 +163,7 @@ def match_bank_transactions_for_receipt(receipt: Receipt):
     for tx in candidates:
         score, reason = match_score(receipt, tx)
         if score >= MIN_REVIEW_SCORE:
-            status = 'auto_matched' if score >= AUTO_MATCH_SCORE else 'needs_review'
+            status = 'auto_matched' if score >= AUTO_MATCH_SCORE and reason.get('merchant', 0) >= MIN_MERCHANT_AUTO_SCORE and reason.get('delta_days') == 0 else 'needs_review'
             obj, _ = MatchCandidate.objects.update_or_create(receipt=receipt, bank_transaction=tx, defaults={'score': score, 'reason': reason, 'status': status})
             if status == 'auto_matched':
                 tx.matched_receipt = receipt
