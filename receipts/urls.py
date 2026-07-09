@@ -1,6 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from . import bank_import_views
+from . import bank_import_views, match_review_views
 from .views import ReceiptViewSet, dashboard, dashboard_subcategory_details, match_candidates, me, scan_receipt, summaries
 
 router = DefaultRouter()
@@ -17,5 +17,7 @@ urlpatterns = [
     path('bank/import/status/<str:job_id>/', bank_import_views.bank_import_status),
     path('summaries/', summaries),
     path('matches/review/', match_candidates),
+    path('matches/review/<int:candidate_id>/accept/', match_review_views.accept_match_candidate),
+    path('matches/review/<int:candidate_id>/reject/', match_review_views.reject_match_candidate),
     path('', include(router.urls)),
 ]
