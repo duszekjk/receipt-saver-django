@@ -42,6 +42,41 @@ def _allow_long_background_openai_calls():
     openai_bank_transactions.OPENAI_REQUEST_TIMEOUT_SECONDS = BACKGROUND_IMPORT_TIMEOUT_SECONDS
 
 
+def _transaction_identity_filter(job, row):
+    scope = {'user': job.user, 'bank': job.bank}
+    if job.family_id:
+        scope = {'family': job.family, 'bank': job.bank}
+    return {
+        **scope,
+        'booked_at': row.get('booked_at'),
+        'transaction_at': row.get('transaction_at'),
+        'amount': row.get('amount'),
+        'currency': row.get('currency') or 'PLN',
+        'raw_description': row.get('raw_description') or '',
+    }
+
+
+def _remove_existing_exact_duplicates(job):
+    qs = BankTransaction.objects.filter(bank=job.bank)
+    qs = qs.filter(family=job.family) if job.family_id else qs.filter(user=job.user)
+    seen = {}
+    duplicate_ids = []
+    fields = ('booked_at', 'transaction_at', 'amount', 'currency', 'raw_description')
+    for tx in qs.order_by('id'):
+        key = tuple(getattr(tx, field) for field in fields)
+        if key in seen:
+            canonical = seen[key]
+            if not canonical.matched_receipt_id and tx.matched_receipt_id:
+                canonical.matched_receipt = tx.matched_receipt
+                canonical.save(update_fields=['matched_receipt'])
+            duplicate_ids.append(tx.id)
+        else:
+            seen[key] = tx
+    if duplicate_ids:
+        BankTransaction.objects.filter(id__in=duplicate_ids).delete()
+    return len(duplicate_ids)
+
+
 def process_bank_import_job(job_id):
     job = BankImportJob.objects.select_related('user', 'family').get(id=job_id)
     if job.status not in [BankImportJob.STATUS_QUEUED, BankImportJob.STATUS_RUNNING]:
@@ -69,8 +104,14 @@ def process_bank_import_job(job_id):
             raise BankClassificationError('Liczba klasyfikacji nie zgadza się z liczbą transakcji.')
 
         with transaction.atomic():
+            _remove_existing_exact_duplicates(job)
             created = 0
+            classified = 0
             for row, data in zip(parsed_rows, classifications):
+                existing = BankTransaction.objects.filter(**_transaction_identity_filter(job, row)).order_by('id').first()
+                if existing:
+                    continue
+
                 tx = BankTransaction.objects.create(
                     user=job.user,
                     family=job.family,
@@ -88,6 +129,7 @@ def process_bank_import_job(job_id):
                 tx.raw_classification_json = data
                 tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
                 created += 1
+                classified += 1
 
             for receipt in visible_receipts(job.user).filter(duplicate_of__isnull=True):
                 match_bank_transactions_for_receipt(receipt)
@@ -95,7 +137,7 @@ def process_bank_import_job(job_id):
             job.status = BankImportJob.STATUS_COMPLETED
             job.progress_current = len(parsed_rows)
             job.created_count = created
-            job.classified_count = len(classifications)
+            job.classified_count = classified
             job.error_message = ''
             job.finished_at = timezone.now()
             job.save(update_fields=['status', 'progress_current', 'created_count', 'classified_count', 'error_message', 'finished_at', 'updated_at'])
