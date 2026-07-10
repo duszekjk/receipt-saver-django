@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from openai import OpenAI
 
-from .categories import normalize_bank_category
+from .categories import allowed_bank_categories_prompt_text, normalize_bank_category
 from .models import BankTransaction
 from .utils import normalize_text
 
@@ -96,6 +96,7 @@ def analyze_purchase_email(text, attachment_text=''):
     combined = '\n\n'.join(part.strip() for part in [text or '', attachment_text or ''] if part and part.strip())
     if not combined:
         raise EmailImportError('Brak treści wiadomości lub czytelnego załącznika.')
+    categories = allowed_bank_categories_prompt_text()
     client = OpenAI(api_key=settings.OPENAI_KEY)
     response = client.chat.completions.create(
         model=getattr(settings, 'OPENAI_RECEIPT_MODEL', 'gpt-4.1-mini'),
@@ -106,8 +107,9 @@ def analyze_purchase_email(text, attachment_text=''):
                     'Analizujesz wiadomość e-mail będącą potwierdzeniem zakupu, rachunkiem albo fakturą. '
                     'Wyodrębnij faktycznie kupioną usługę lub produkt, datę, kwotę i walutę. '
                     'Nie klasyfikuj wszystkich zakupów Apple jako akcesoria komputerowe. '
-                    'iCloud to usługi cyfrowe/subskrypcje, filmy to rozrywka, aplikacje to aplikacje i usługi cyfrowe. '
-                    'Nie zgaduj danych, których nie ma. Category i subcategory muszą należeć do kategorii bankowych aplikacji.'
+                    'iCloud to usługi cyfrowe lub subskrypcje, filmy to rozrywka, aplikacje to aplikacje i usługi cyfrowe. '
+                    'Nie zgaduj danych, których nie ma. Category i subcategory muszą być dokładnie jedną z poniższych par. '
+                    'Nie używaj kategorii Inne ani własnych kategorii.\n\nDozwolone kategorie:\n' + categories
                 ),
             },
             {'role': 'user', 'content': combined[:50000]},
