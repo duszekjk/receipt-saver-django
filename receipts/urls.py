@@ -12,6 +12,7 @@ urlpatterns = [
     path('dashboard/subcategory/', dashboard_subcategory_details),
     path('receipts/scan/', scan_receipt),
     path('receipts/<int:receipt_id>/date/', set_receipt_date),
+    path('receipts/<int:receipt_id>/preview/', receipt_edit_views.receipt_preview),
     path('receipts/<int:receipt_id>/edit/', receipt_edit_views.update_receipt),
     path('receipts/<int:receipt_id>/delete/', receipt_edit_views.delete_receipt),
     path('imports/email/', email_import_views.import_purchase_email),
