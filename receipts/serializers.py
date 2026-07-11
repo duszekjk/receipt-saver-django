@@ -1,6 +1,8 @@
 from django.db import transaction
 from rest_framework import serializers
+from .categories import normalize_category
 from .models import BankTransaction, Family, MatchCandidate, Receipt, ReceiptItem, ReceiptUserProfile
+from .utils import normalize_text
 
 
 class FamilySerializer(serializers.ModelSerializer):
@@ -23,7 +25,19 @@ class ReceiptItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReceiptItem
         fields = '__all__'
-        read_only_fields = ['receipt']
+        read_only_fields = ['receipt', 'name_normalized']
+
+    def validate(self, attrs):
+        category = attrs.get('category')
+        subcategory = attrs.get('subcategory')
+        if category or subcategory:
+            try:
+                category, subcategory = normalize_category(category, subcategory)
+            except ValueError as error:
+                raise serializers.ValidationError({'category': str(error)})
+            attrs['category'] = category
+            attrs['subcategory'] = subcategory
+        return attrs
 
 
 class ReceiptSerializer(serializers.ModelSerializer):
@@ -33,7 +47,7 @@ class ReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = Receipt
         fields = '__all__'
-        read_only_fields = ['user', 'family', 'image', 'content_fingerprint', 'duplicate_of', 'raw_openai_json', 'created_at']
+        read_only_fields = ['user', 'family', 'image', 'merchant_normalized', 'content_fingerprint', 'duplicate_of', 'raw_openai_json', 'created_at']
 
     def validate_currency(self, value):
         value = (value or '').strip().upper()
@@ -46,6 +60,8 @@ class ReceiptSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items', None)
         for field, value in validated_data.items():
             setattr(instance, field, value)
+        if 'merchant_name' in validated_data:
+            instance.merchant_normalized = normalize_text(instance.merchant_name)
         instance.save()
 
         if items_data is not None:
@@ -57,13 +73,15 @@ class ReceiptSerializer(serializers.ModelSerializer):
                     item = existing.get(item_id)
                     if item is None:
                         raise serializers.ValidationError({'items': f'Pozycja {item_id} nie należy do tego paragonu.'})
-                    for field, value in item_data.items():
-                        setattr(item, field, value)
-                    item.save()
-                    retained_ids.add(item.id)
                 else:
-                    item = ReceiptItem.objects.create(receipt=instance, **item_data)
-                    retained_ids.add(item.id)
+                    item = ReceiptItem(receipt=instance)
+
+                for field, value in item_data.items():
+                    setattr(item, field, value)
+                item.name_normalized = normalize_text(item.name)
+                item.save()
+                retained_ids.add(item.id)
+
             instance.items.exclude(id__in=retained_ids).delete()
 
         return instance
