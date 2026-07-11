@@ -23,6 +23,7 @@ def _serialize(tx):
         'currency': tx.currency or 'PLN',
         'date': transaction_date.isoformat() if transaction_date else '',
         'items': raw.get('manual_items') or [],
+        'suggested_items': raw.get('suggested_items') or [],
     }
 
 
