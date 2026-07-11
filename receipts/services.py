@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
 from .openai_receipts import parse_receipt_image
+from .undo_service import record_undo
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
 MIN_REVIEW_SCORE = 0.75
@@ -53,6 +54,12 @@ def create_receipt_from_image(user, image_file) -> Receipt:
         receipt.save(update_fields=['duplicate_of'])
     if receipt.purchased_at:
         match_bank_transactions_for_receipt(receipt)
+    record_undo(
+        user,
+        'receipt_scan',
+        f'Skan paragonu {receipt.merchant_name or "bez nazwy"}',
+        {'action': 'delete_receipt', 'receipt_id': receipt.id},
+    )
     return receipt
 
 
