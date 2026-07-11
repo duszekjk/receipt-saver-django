@@ -14,14 +14,26 @@ API_AUTHENTICATION = [AppTokenAuthentication]
 
 def _serialize(tx):
     raw = tx.raw_classification_json or {}
+    transaction_date = tx.transaction_at or tx.booked_at
     return {
         'transaction_id': tx.id,
         'merchant_name': tx.merchant_name or '',
         'description': tx.corrected_description or tx.raw_description or '',
         'amount': str(abs(tx.amount)),
         'currency': tx.currency or 'PLN',
+        'date': transaction_date.isoformat() if transaction_date else '',
         'items': raw.get('manual_items') or [],
     }
+
+
+@api_view(['GET'])
+@authentication_classes(API_AUTHENTICATION)
+@permission_classes([permissions.IsAuthenticated])
+def bank_transactions(request):
+    transactions = visible_bank_transactions(request.user).filter(amount__lt=0, matched_receipt__isnull=True).exclude(
+        transaction_type__in=['internal_transfer', 'neutral']
+    ).order_by('-transaction_at', '-booked_at', '-id')[:500]
+    return Response([_serialize(tx) for tx in transactions])
 
 
 @api_view(['GET', 'PUT'])
