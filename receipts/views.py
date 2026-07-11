@@ -84,6 +84,7 @@ def _expense_rows(user, start, end):
                 'source': 'receipt',
                 'date': receipt.purchased_at.isoformat() if receipt.purchased_at else '',
                 'receipt_id': receipt.id,
+                'bank_transaction_id': None,
                 'quantity': float(item.quantity) if item.quantity is not None else None,
                 'unit_price': float(item.unit_price) if item.unit_price is not None else None,
                 'regular_price': float(item.regular_price) if item.regular_price is not None else None,
@@ -92,22 +93,46 @@ def _expense_rows(user, start, end):
             })
     standalone = []
     for tx in visible_bank_transactions(user).filter(booked_at__gte=start, booked_at__lt=end, matched_receipt__isnull=True, amount__lt=0).exclude(transaction_type__in=['internal_transfer', 'neutral']):
-        standalone.append({
-            'name': tx.corrected_description or tx.merchant_name or tx.raw_description,
-            'merchant': tx.merchant_name or tx.corrected_description or 'Transakcja bankowa',
-            'category': tx.category or 'Bez kategorii',
-            'subcategory': tx.subcategory or 'Bez podkategorii',
-            'spent': float(abs(tx.amount)),
-            'saved': 0.0,
-            'source': 'bank',
-            'date': (tx.transaction_at or tx.booked_at).isoformat() if (tx.transaction_at or tx.booked_at) else '',
-            'receipt_id': None,
-            'quantity': None,
-            'unit_price': None,
-            'regular_price': None,
-            'discount_amount': 0.0,
-            'promotion_name': '',
-        })
+        transaction_date = (tx.transaction_at or tx.booked_at).isoformat() if (tx.transaction_at or tx.booked_at) else ''
+        merchant = tx.merchant_name or tx.corrected_description or 'Transakcja bankowa'
+        manual_items = (tx.raw_classification_json or {}).get('manual_items') or []
+        if manual_items:
+            for item in manual_items:
+                standalone.append({
+                    'name': item.get('name') or merchant,
+                    'merchant': merchant,
+                    'category': item.get('category') or tx.category or 'Bez kategorii',
+                    'subcategory': item.get('subcategory') or tx.subcategory or 'Bez podkategorii',
+                    'spent': float(item.get('amount') or 0),
+                    'saved': 0.0,
+                    'source': 'bank',
+                    'date': transaction_date,
+                    'receipt_id': None,
+                    'bank_transaction_id': tx.id,
+                    'quantity': None,
+                    'unit_price': None,
+                    'regular_price': None,
+                    'discount_amount': 0.0,
+                    'promotion_name': '',
+                })
+        else:
+            standalone.append({
+                'name': tx.corrected_description or tx.merchant_name or tx.raw_description,
+                'merchant': merchant,
+                'category': tx.category or 'Bez kategorii',
+                'subcategory': tx.subcategory or 'Bez podkategorii',
+                'spent': float(abs(tx.amount)),
+                'saved': 0.0,
+                'source': 'bank',
+                'date': transaction_date,
+                'receipt_id': None,
+                'bank_transaction_id': tx.id,
+                'quantity': None,
+                'unit_price': None,
+                'regular_price': None,
+                'discount_amount': 0.0,
+                'promotion_name': '',
+            })
     return receipt_items + standalone
 
 
@@ -141,6 +166,7 @@ def _group_with_details(rows, key):
             'source': row.get('source') or '',
             'date': row.get('date') or '',
             'receipt_id': row.get('receipt_id'),
+            'bank_transaction_id': row.get('bank_transaction_id'),
             'quantity': row.get('quantity'),
             'unit_price': row.get('unit_price'),
             'regular_price': row.get('regular_price'),
