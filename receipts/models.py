@@ -180,3 +180,19 @@ class MatchCandidate(models.Model):
 
     class Meta:
         unique_together = [('receipt', 'bank_transaction')]
+
+
+class UndoOperation(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.CASCADE)
+    operation_type = models.CharField(max_length=64)
+    label = models.CharField(max_length=255)
+    payload = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    undone_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return self.label
