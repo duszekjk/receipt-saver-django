@@ -21,6 +21,7 @@ RECEIPT_CATEGORIES = {
     'Mieszkanie': ['prąd', 'gaz', 'woda', 'internet', 'telefon', 'czynsz', 'ogrzewanie', 'śmieci'],
     'Restauracje': ['restauracja', 'fast food', 'kawiarnia', 'cukiernia'],
     'Ubrania': ['odzież', 'obuwie', 'bielizna', 'naprawa ubrań'],
+    'Akcesoria osobiste': ['parasole', 'portfele', 'okulary', 'zegarki', 'biżuteria', 'torby i plecaki'],
     'Zwierzęta': ['karma', 'weterynarz', 'leki', 'akcesoria'],
     'Hobby': ['książki', 'ogród', 'rękodzieło', 'sport', 'elektronika', 'prasa'],
     'Rodzina': ['dzieci', 'wnuki', 'prezenty', 'uroczystości'],
