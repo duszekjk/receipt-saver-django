@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.response import Response
 from .models import MatchCandidate
 from .serializers import MatchCandidateSerializer
+from .undo_service import record_undo
 from .views import API_AUTHENTICATION, user_family
 
 
@@ -28,11 +29,27 @@ def accept_match_candidate(request, candidate_id):
     if not candidate:
         return Response({'detail': 'Dopasowanie nie istnieje.'}, status=404)
     tx = candidate.bank_transaction
+    related = MatchCandidate.objects.filter(bank_transaction=tx)
+    previous_statuses = {str(item.id): item.status for item in related}
+    previous_matched_receipt_id = tx.matched_receipt_id
+
     tx.matched_receipt = candidate.receipt
     tx.save(update_fields=['matched_receipt'])
     candidate.status = 'auto_matched'
     candidate.save(update_fields=['status'])
     MatchCandidate.objects.filter(bank_transaction=tx, status='needs_review').exclude(id=candidate.id).update(status='rejected')
+
+    record_undo(
+        request.user,
+        'match_accept',
+        f'Dopasowanie {candidate.receipt.merchant_name or "paragonu"}',
+        {
+            'action': 'restore_match',
+            'transaction_id': tx.id,
+            'previous_matched_receipt_id': previous_matched_receipt_id,
+            'candidate_statuses': previous_statuses,
+        },
+    )
     return Response(MatchCandidateSerializer(candidate).data)
 
 
