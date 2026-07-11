@@ -9,6 +9,7 @@ from .utils import normalize_text
 
 HEADER_MARKERS = ['data transakcji', 'data ksiegowania', 'kwota transakcji']
 REVOLUT_HEADER_MARKERS = ['type', 'product', 'started date', 'completed date', 'description', 'amount', 'currency', 'state', 'balance']
+CARD_MASK_PATTERN = re.compile(r'(?<!\d)(\d{4,8}\*{2,12}\d{4})(?!\d)')
 
 
 def parse_date(value):
@@ -44,6 +45,16 @@ def decode_text(raw):
         except UnicodeDecodeError:
             pass
     return raw.decode('utf-8', errors='ignore')
+
+
+def extract_masked_card(value):
+    match = CARD_MASK_PATTERN.search(str(value or '').replace(' ', ''))
+    return match.group(1) if match else ''
+
+
+def card_last4(value):
+    digits = ''.join(character for character in str(value or '') if character.isdigit())
+    return digits[-4:] if len(digits) >= 4 else ''
 
 
 def find_header_line(lines, bank=''):
@@ -107,7 +118,7 @@ def read_csv_rows(raw, bank=''):
         dialect = csv.Sniffer().sniff(table_text[:4096], delimiters=';\t,')
     except csv.Error:
         dialect = csv.excel
-        dialect.delimiter = ',' if bank == 'revolut' else ';'
+        dialect.delimiter = ',' if bank in {'revolut', 'santander'} else ';'
     reader = csv.reader(io.StringIO(table_text), dialect=dialect)
     try:
         headers = make_unique_headers(next(reader))
@@ -122,6 +133,16 @@ def read_csv_rows(raw, bank=''):
         row = dict(zip(headers, values[:len(headers)]))
         rows.append(row)
     return rows
+
+
+def read_santander_csv_values(raw):
+    text = decode_text(raw)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=',;\t')
+    except csv.Error:
+        dialect = csv.excel
+        dialect.delimiter = ','
+    return [values for values in csv.reader(io.StringIO(text), dialect=dialect) if any(str(value).strip() for value in values)]
 
 
 def read_statement_rows(file_obj, bank=''):
@@ -191,6 +212,7 @@ def parse_revolut_statement_row(row):
         return None
     desc_parts = [description, transaction_type, product, state]
     desc = ' '.join(part for part in desc_parts if part)
+    masked_card = extract_masked_card(desc)
     return {
         'booked_at': parsed_date,
         'transaction_at': parsed_date,
@@ -199,12 +221,54 @@ def parse_revolut_statement_row(row):
         'raw_description': desc,
         'amount': parsed_amount,
         'currency': currency,
-        'raw_row': row | {'_revolut_type': transaction_type, '_revolut_product': product, '_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or '')},
+        'raw_row': row | {'_revolut_type': transaction_type, '_revolut_product': product, '_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or ''), '_payment_card_masked': masked_card, '_payment_card_last4': card_last4(masked_card)},
     }
+
+
+def parse_santander_statement(file_obj):
+    raw = file_obj.read()
+    values_rows = read_santander_csv_values(raw)
+    if not values_rows:
+        return
+    # Santander's first row is account metadata, not a transaction header.
+    for index, values in enumerate(values_rows[1:], start=1):
+        values = values + [''] * max(0, 9 - len(values))
+        booked_at = parse_date(values[0])
+        transaction_at = parse_date(values[1]) or booked_at
+        description = str(values[2] or '').strip()
+        amount = parse_amount(values[5])
+        if not booked_at or not transaction_at or amount == 0 or not description:
+            continue
+        masked_card = extract_masked_card(description)
+        raw_row = {
+            '_santander_row_number': index,
+            'booked_at': values[0],
+            'transaction_at': values[1],
+            'description': description,
+            'amount': values[5],
+            'balance': values[6],
+            'sequence': values[7],
+            '_payment_card_masked': masked_card,
+            '_payment_card_last4': card_last4(masked_card),
+        }
+        yield {
+            'booked_at': booked_at,
+            'transaction_at': transaction_at,
+            'merchant_name': description[:255],
+            'merchant_normalized': normalize_text(description),
+            'raw_description': description,
+            'amount': amount,
+            'currency': 'PLN',
+            'raw_row': raw_row,
+        }
 
 
 def parse_bank_statement(file_obj, bank: str):
     bank = (bank or '').lower()
+    if bank == 'santander':
+        yield from parse_santander_statement(file_obj)
+        return
+
     for row in read_statement_rows(file_obj, bank=bank):
         if bank == 'revolut':
             parsed = parse_revolut_statement_row(row)
@@ -235,7 +299,7 @@ def parse_bank_statement(file_obj, bank: str):
             continue
         if not parsed_date or parsed_amount == 0:
             continue
-
+        masked_card = extract_masked_card(desc)
         yield {
             'booked_at': parse_date(booked) or parsed_date,
             'transaction_at': parsed_date,
@@ -244,7 +308,7 @@ def parse_bank_statement(file_obj, bank: str):
             'raw_description': desc,
             'amount': parsed_amount,
             'currency': currency,
-            'raw_row': row,
+            'raw_row': row | {'_payment_card_masked': masked_card, '_payment_card_last4': card_last4(masked_card)},
         }
 
 
