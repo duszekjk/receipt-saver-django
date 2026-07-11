@@ -20,6 +20,7 @@ urlpatterns = [
     path('bank/import/', bank_import_views.import_bank_statement),
     path('bank/import/status/latest/', bank_import_views.latest_bank_import_status),
     path('bank/import/status/<str:job_id>/', bank_import_views.bank_import_status),
+    path('bank/transactions/', bank_transaction_item_views.bank_transactions),
     path('bank/transactions/<int:transaction_id>/items/', bank_transaction_item_views.bank_transaction_items),
     path('summaries/', summaries),
     path('matches/review/', match_candidates),
