@@ -28,10 +28,28 @@ Zasady:
 - category i subcategory muszą pochodzić dokładnie z poniższej listy.
 - Nie używaj Inne/inne.
 - Nie używaj ogólnych kategorii spoza listy, np. Zakupy. Wybierz najbliższą konkretną kategorię z listy.
+- Dla wydatków podaj od 0 do 5 krótkich sugestii możliwych produktów lub usług w polu suggested_items.
+- Sugestie są tylko hipotezami do ręcznego zatwierdzenia. Nie wymyślaj szczegółowych marek lub wariantów, których nie da się wywnioskować z nazwy sprzedawcy i opisu.
+- Dla oczywistych przypadków możesz podać jedną sugestię, np. Mobilet lub Parking Poznania -> opłata za parking.
+- Dla stacji paliw możesz zasugerować np. tankowanie, kawa lub zakupy na stacji, ale nie zakładaj automatycznie, że wszystkie wystąpiły.
+- Dla income, internal_transfer i neutral zwracaj pustą listę suggested_items.
+- Każda sugestia musi mieć kategorię i podkategorię dokładnie z listy dozwolonych kategorii.
 
 Dozwolone kategorie:
 {allowed_bank_categories_prompt_text()}
 '''
+
+SUGGESTED_ITEM_SCHEMA = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {
+        'name': {'type': 'string'},
+        'category': {'type': 'string'},
+        'subcategory': {'type': 'string'},
+        'reason': {'type': 'string'},
+    },
+    'required': ['name', 'category', 'subcategory', 'reason'],
+}
 
 STATEMENT_JSON_SCHEMA = {
     'name': 'bank_statement_classification',
@@ -53,8 +71,9 @@ STATEMENT_JSON_SCHEMA = {
                         'subcategory': {'type': 'string'},
                         'confidence': {'type': 'number'},
                         'notes': {'type': 'string'},
+                        'suggested_items': {'type': 'array', 'items': SUGGESTED_ITEM_SCHEMA, 'maxItems': 5},
                     },
-                    'required': ['index', 'corrected_description', 'merchant_name', 'transaction_type', 'category', 'subcategory', 'confidence', 'notes'],
+                    'required': ['index', 'corrected_description', 'merchant_name', 'transaction_type', 'category', 'subcategory', 'confidence', 'notes', 'suggested_items'],
                 },
             }
         },
@@ -76,8 +95,9 @@ SINGLE_JSON_SCHEMA = {
             'subcategory': {'type': 'string'},
             'confidence': {'type': 'number'},
             'notes': {'type': 'string'},
+            'suggested_items': {'type': 'array', 'items': SUGGESTED_ITEM_SCHEMA, 'maxItems': 5},
         },
-        'required': ['corrected_description', 'merchant_name', 'transaction_type', 'category', 'subcategory', 'confidence', 'notes'],
+        'required': ['corrected_description', 'merchant_name', 'transaction_type', 'category', 'subcategory', 'confidence', 'notes', 'suggested_items'],
     },
     'strict': True,
 }
@@ -129,6 +149,36 @@ def _chat_completion(client, messages, schema):
     return response.choices[0].message.content
 
 
+def _clean_suggestions(item, transaction_type, errors, index):
+    if transaction_type != 'expense':
+        return []
+    raw_suggestions = item.get('suggested_items') or []
+    if not isinstance(raw_suggestions, list):
+        errors.append(f'Index {index}: suggested_items nie jest listą.')
+        return []
+    cleaned = []
+    for suggestion_index, suggestion in enumerate(raw_suggestions[:5]):
+        if not isinstance(suggestion, dict):
+            errors.append(f'Index {index}, sugestia {suggestion_index + 1}: niepoprawny format.')
+            continue
+        name = str(suggestion.get('name') or '').strip()
+        if not name:
+            errors.append(f'Index {index}, sugestia {suggestion_index + 1}: brak nazwy.')
+            continue
+        try:
+            category, subcategory = normalize_bank_category(suggestion.get('category'), suggestion.get('subcategory'))
+        except ValueError as error:
+            errors.append(f'Index {index}, sugestia {suggestion_index + 1}: {error}')
+            continue
+        cleaned.append({
+            'name': name,
+            'category': category,
+            'subcategory': subcategory,
+            'reason': str(suggestion.get('reason') or '').strip(),
+        })
+    return cleaned
+
+
 def _validate_statement_response(raw_content, bank, rows):
     data = json.loads(raw_content)
     transactions = data.get('transactions')
@@ -164,6 +214,7 @@ def _validate_statement_response(raw_content, bank, rows):
         merchant_name = item.get('merchant_name') or source_row.get('merchant_name') or ''
         if looks_like_amount_fragment(merchant_name):
             merchant_name = source_row.get('merchant_name') or ''
+        suggested_items = _clean_suggestions(item, transaction_type, errors, index)
         cleaned_by_index[index] = {
             'corrected_description': item.get('corrected_description') or source_row.get('raw_description') or source_row.get('merchant_name') or '',
             'merchant_name': merchant_name,
@@ -172,6 +223,7 @@ def _validate_statement_response(raw_content, bank, rows):
             'subcategory': subcategory,
             'confidence': item.get('confidence') or 0,
             'notes': item.get('notes') or '',
+            'suggested_items': suggested_items,
         }
 
     missing = expected_indexes - seen_indexes
