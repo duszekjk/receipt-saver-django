@@ -3,13 +3,24 @@ import io
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+
 import pandas as pd
+
 from .utils import normalize_text
 
 
-HEADER_MARKERS = ['data transakcji', 'data ksiegowania', 'kwota transakcji']
-REVOLUT_HEADER_MARKERS = ['type', 'product', 'started date', 'completed date', 'description', 'amount', 'currency', 'state', 'balance']
-CARD_MASK_PATTERN = re.compile(r'(?<!\d)(\d{4,8}\*{2,12}\d{4})(?!\d)')
+HEADER_MARKER_GROUPS = [
+    ('data transakcji', 'data ksiegowania'),
+    ('transaction date', 'accounting date'),
+]
+REVOLUT_HEADER_MARKERS = [
+    'type', 'product', 'started date', 'completed date',
+    'description', 'amount', 'currency', 'state', 'balance',
+]
+CARD_MASK_PATTERN = re.compile(
+    r'(?<!\d)(\d{4,8}(?:\*{2,12}|x{2,12})\d{4})(?!\d)',
+    re.IGNORECASE,
+)
 
 
 def parse_date(value):
@@ -18,7 +29,10 @@ def parse_date(value):
         return None
     if hasattr(value, 'date'):
         return value.date()
-    for fmt in ['%Y-%m-%d', '%d.%m.%Y', '%d-%m-%Y', '%Y/%m/%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S %z']:
+    for fmt in [
+        '%Y-%m-%d', '%d.%m.%Y', '%d-%m-%Y', '%Y/%m/%d', '%d/%m/%Y',
+        '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S %z',
+    ]:
         try:
             return datetime.strptime(value[:19], fmt.replace(' %z', '')).date()
         except ValueError:
@@ -30,7 +44,14 @@ def parse_date(value):
 
 
 def parse_amount(value):
-    value = str(value or '0').strip().strip('"').replace('\xa0', '').replace(' ', '').replace(',', '.')
+    value = (
+        str(value or '0')
+        .strip()
+        .strip('"')
+        .replace('\xa0', '')
+        .replace(' ', '')
+        .replace(',', '.')
+    )
     value = ''.join(ch for ch in value if ch.isdigit() or ch in '.-')
     try:
         return Decimal(value or '0')
@@ -58,20 +79,19 @@ def card_last4(value):
 
 
 def find_header_line(lines, bank=''):
-    markers = REVOLUT_HEADER_MARKERS if bank == 'revolut' else HEADER_MARKERS
     for index, line in enumerate(lines):
         normalized = normalize_text(line)
         if bank == 'revolut':
-            if all(marker in normalized for marker in markers):
+            if all(marker in normalized for marker in REVOLUT_HEADER_MARKERS):
                 return index
             if 'completed date' in normalized and 'description' in normalized and 'amount' in normalized:
                 return index
             if 'started date' in normalized and 'description' in normalized and 'amount' in normalized:
                 return index
-        else:
-            if all(marker in normalized for marker in markers):
-                return index
-            if 'data transakcji' in normalized and 'kwota' in normalized:
+            continue
+
+        if any(all(marker in normalized for marker in group) for group in HEADER_MARKER_GROUPS):
+            if 'kwota' in normalized or 'transaction amount' in normalized or 'amount' in normalized:
                 return index
     return 0
 
@@ -130,8 +150,7 @@ def read_csv_rows(raw, bank=''):
             continue
         if len(values) < len(headers):
             values = values + [''] * (len(headers) - len(values))
-        row = dict(zip(headers, values[:len(headers)]))
-        rows.append(row)
+        rows.append(dict(zip(headers, values[:len(headers)])))
     return rows
 
 
@@ -142,7 +161,11 @@ def read_santander_csv_values(raw):
     except csv.Error:
         dialect = csv.excel
         dialect.delimiter = ','
-    return [values for values in csv.reader(io.StringIO(text), dialect=dialect) if any(str(value).strip() for value in values)]
+    return [
+        values
+        for values in csv.reader(io.StringIO(text), dialect=dialect)
+        if any(str(value).strip() for value in values)
+    ]
 
 
 def read_statement_rows(file_obj, bank=''):
@@ -185,10 +208,14 @@ def clean_currency(value):
 
 
 def get_ing_amount_and_currency(row):
-    amount = exact_pick(row, 'Kwota transakcji (waluta rachunku)')
-    currency = exact_pick(row, 'Waluta')
+    amount = exact_pick(
+        row,
+        'Kwota transakcji (waluta rachunku)',
+        'Transaction amount (account currency)',
+    )
     if not amount:
-        amount = contains_pick(row, 'Kwota transakcji')
+        amount = contains_pick(row, 'Kwota transakcji', 'Transaction amount')
+    currency = exact_pick(row, 'Waluta', 'Currency')
     return amount, clean_currency(currency)
 
 
@@ -221,7 +248,14 @@ def parse_revolut_statement_row(row):
         'raw_description': desc,
         'amount': parsed_amount,
         'currency': currency,
-        'raw_row': row | {'_revolut_type': transaction_type, '_revolut_product': product, '_revolut_fee': str(fee or ''), '_revolut_balance': str(balance or ''), '_payment_card_masked': masked_card, '_payment_card_last4': card_last4(masked_card)},
+        'raw_row': row | {
+            '_revolut_type': transaction_type,
+            '_revolut_product': product,
+            '_revolut_fee': str(fee or ''),
+            '_revolut_balance': str(balance or ''),
+            '_payment_card_masked': masked_card,
+            '_payment_card_last4': card_last4(masked_card),
+        },
     }
 
 
@@ -230,7 +264,6 @@ def parse_santander_statement(file_obj):
     values_rows = read_santander_csv_values(raw)
     if not values_rows:
         return
-    # Santander's first row is account metadata, not a transaction header.
     for index, values in enumerate(values_rows[1:], start=1):
         values = values + [''] * max(0, 9 - len(values))
         booked_at = parse_date(values[0])
@@ -276,22 +309,62 @@ def parse_bank_statement(file_obj, bank: str):
                 yield parsed
             continue
 
-        booked = pick(row, 'Data księgowania', 'Data ksiegowania')
-        tx_date = pick(row, 'Data transakcji', 'Data operacji', 'Data')
-        desc = ' '.join(
-            part.strip()
-            for part in [
-                str(pick(row, 'Dane kontrahenta', 'Kontrahent')).strip(),
-                str(pick(row, 'Tytuł', 'Tytul', 'Opis transakcji', 'Opis')).strip(),
-                str(pick(row, 'Szczegóły', 'Szczegoly')).strip(),
-            ]
-            if part
+        booked = pick(
+            row,
+            'Data księgowania',
+            'Data ksiegowania',
+            'Accounting date',
+            'Booking date',
         )
+        tx_date = pick(
+            row,
+            'Data transakcji',
+            'Data operacji',
+            'Transaction date',
+            'Operation date',
+            'Data',
+        )
+        counterparty = str(
+            pick(
+                row,
+                'Dane kontrahenta',
+                'Kontrahent',
+                "Counterparty's data",
+                'Counterparty data',
+                'Counterparty',
+            )
+        ).strip()
+        title = str(
+            pick(
+                row,
+                'Tytuł',
+                'Tytul',
+                'Opis transakcji',
+                'Opis',
+                'Title',
+                'Transaction description',
+                'Description',
+            )
+        ).strip()
+        details = str(pick(row, 'Szczegóły', 'Szczegoly', 'Details')).strip()
+        desc = ' '.join(part for part in [counterparty, title, details] if part)
+
         if bank == 'ing':
             amount, currency = get_ing_amount_and_currency(row)
         else:
-            amount = pick(row, 'Kwota transakcji', 'Kwota', 'Obciążenia', 'Obciazenia', 'Uznania')
-            currency = clean_currency(exact_pick(row, 'Waluta') or 'PLN')
+            amount = pick(
+                row,
+                'Kwota transakcji',
+                'Kwota',
+                'Obciążenia',
+                'Obciazenia',
+                'Uznania',
+                'Transaction amount',
+                'Amount',
+                'Debits',
+                'Credits',
+            )
+            currency = clean_currency(exact_pick(row, 'Waluta', 'Currency') or 'PLN')
 
         parsed_amount = parse_amount(amount)
         parsed_date = parse_date(tx_date) or parse_date(booked)
@@ -303,12 +376,15 @@ def parse_bank_statement(file_obj, bank: str):
         yield {
             'booked_at': parse_date(booked) or parsed_date,
             'transaction_at': parsed_date,
-            'merchant_name': desc[:255] or 'Nieznany kontrahent',
-            'merchant_normalized': normalize_text(desc),
+            'merchant_name': counterparty[:255] or desc[:255] or 'Nieznany kontrahent',
+            'merchant_normalized': normalize_text(counterparty or desc),
             'raw_description': desc,
             'amount': parsed_amount,
             'currency': currency,
-            'raw_row': row | {'_payment_card_masked': masked_card, '_payment_card_last4': card_last4(masked_card)},
+            'raw_row': row | {
+                '_payment_card_masked': masked_card,
+                '_payment_card_last4': card_last4(masked_card),
+            },
         }
 
 
