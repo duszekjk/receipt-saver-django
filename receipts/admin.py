@@ -88,7 +88,7 @@ class FamilyAdmin(admin.ModelAdmin):
     search_fields = ('name',)
 
     def dashboard_link(self, obj):
-        url = reverse('admin:receipts-dashboard') + f'?family={obj.id}'
+        url = reverse('admin:receipts_dashboard') + f'?family={obj.id}'
         return format_html('<a class="button" href="{}">Dashboard</a>', url)
 
     def member_count(self, obj):
