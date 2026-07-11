@@ -7,6 +7,7 @@ from .models import BankImportJob, BankTransaction
 from . import openai_bank_transactions
 from .openai_bank_transactions import BankClassificationError
 from .services import match_bank_transactions_for_receipt
+from .undo_service import record_undo
 from .utils import normalize_text
 from .views import visible_receipts
 
@@ -109,7 +110,7 @@ def _store_import_result(job, parsed_rows, classifications):
     def operation():
         with transaction.atomic():
             _remove_existing_exact_duplicates(job)
-            created = 0
+            created_ids = []
             classified = 0
             for row, data in zip(parsed_rows, classifications):
                 existing = BankTransaction.objects.filter(**_transaction_identity_filter(job, row)).order_by('id').first()
@@ -125,18 +126,25 @@ def _store_import_result(job, parsed_rows, classifications):
                 tx.classification_source = 'openai'
                 tx.raw_classification_json = data
                 tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
-                created += 1
+                created_ids.append(tx.id)
                 classified += 1
             for receipt in visible_receipts(job.user).filter(duplicate_of__isnull=True):
                 match_bank_transactions_for_receipt(receipt)
             job.status = BankImportJob.STATUS_COMPLETED
             job.progress_current = len(parsed_rows)
-            job.created_count = created
+            job.created_count = len(created_ids)
             job.classified_count = classified
             job.error_message = ''
             job.finished_at = timezone.now()
             job.save(update_fields=['status', 'progress_current', 'created_count', 'classified_count', 'error_message', 'finished_at', 'updated_at'])
-            return created, classified
+            if created_ids:
+                record_undo(
+                    job.user,
+                    'bank_import',
+                    f'Import wyciągu {job.bank.upper()} ({len(created_ids)} transakcji)',
+                    {'action': 'delete_bank_import', 'transaction_ids': created_ids, 'job_id': str(job.id)},
+                )
+            return len(created_ids), classified
     return _with_db_retry(operation)
 
 
