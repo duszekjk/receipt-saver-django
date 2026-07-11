@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
@@ -7,9 +7,9 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.response import Response
 
 from .authentication import AppTokenAuthentication
+from .expense_rows import expense_rows
 from .views import (
     _aware_bounds,
-    _expense_rows,
     _group,
     _group_with_details,
     visible_receipts,
@@ -50,8 +50,6 @@ def _period_bounds(period, month='', start_value='', end_value=''):
     elif period == '12m':
         end = today + timedelta(days=1)
         start = date(today.year - 1, today.month, 1)
-        if today.day == 1:
-            start = date(today.year - 1, today.month, 1)
     elif period == 'custom':
         start = _parse_date(start_value)
         inclusive_end = _parse_date(end_value)
@@ -110,7 +108,7 @@ def dashboard(request):
         return Response({'detail': str(error)}, status=400)
 
     category = request.GET.get('category', '')
-    source_rows = _expense_rows(request.user, start, end)
+    source_rows = expense_rows(request.user, start, end)
     available_categories = sorted({row['category'] for row in source_rows})
     rows = [row for row in source_rows if not category or row['category'] == category]
     display_rows = _scale_rows(rows, divisor)
@@ -179,7 +177,7 @@ def dashboard_subcategory_details(request):
     except ValueError as error:
         return Response({'detail': str(error)}, status=400)
     subcategory = request.GET.get('subcategory', '')
-    rows = [row for row in _expense_rows(request.user, start, end) if row['subcategory'] == subcategory]
+    rows = [row for row in expense_rows(request.user, start, end) if row['subcategory'] == subcategory]
     display_rows = _scale_rows(rows, divisor)
     products = _group_with_details(display_rows, 'name')
     return Response({
