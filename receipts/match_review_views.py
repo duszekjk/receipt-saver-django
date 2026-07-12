@@ -2,23 +2,19 @@ from rest_framework import permissions
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
 from .models import MatchCandidate
+from .profile_access import visible_receipts
 from .serializers import MatchCandidateSerializer
 from .undo_service import record_undo
-from .views import API_AUTHENTICATION, user_family
+from .views import API_AUTHENTICATION
 
 
-def _visible_match_candidates(user):
-    qs = MatchCandidate.objects.select_related('receipt', 'bank_transaction').prefetch_related('receipt__items')
-    if user.is_superuser:
-        return qs
-    family = user_family(user)
-    if family:
-        return qs.filter(receipt__family=family)
-    return qs.filter(receipt__user=user)
+def _visible_match_candidates(principal):
+    receipt_ids = visible_receipts(principal).values_list('id', flat=True)
+    return MatchCandidate.objects.filter(receipt_id__in=receipt_ids).select_related('receipt', 'bank_transaction').prefetch_related('receipt__items')
 
 
-def _get_candidate(user, candidate_id):
-    return _visible_match_candidates(user).filter(id=candidate_id).first()
+def _get_candidate(principal, candidate_id):
+    return _visible_match_candidates(principal).filter(id=candidate_id).first()
 
 
 @api_view(['POST'])
