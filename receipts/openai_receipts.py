@@ -2,10 +2,12 @@ import base64
 import json
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
+
 from django.conf import settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from openai import OpenAI
+
 from .categories import allowed_categories_prompt_text, normalize_category
 
 
@@ -128,10 +130,8 @@ def _validate_date(value):
     if timezone.is_naive(purchased_at):
         purchased_at = timezone.make_aware(purchased_at, timezone.get_current_timezone())
     now = timezone.now()
-    if purchased_at > now + timedelta(days=1):
-        raise ReceiptDateUnreadableError('Odczytana data paragonu jest z przyszłości. Wpisz poprawną datę ręcznie.')
-    if purchased_at < now - timedelta(days=366):
-        raise ReceiptDateUnreadableError('Odczytana data paragonu jest starsza niż 12 miesięcy i wygląda na błędnie zeskanowaną. Wpisz datę ręcznie.')
+    if purchased_at > now + timedelta(days=1) or purchased_at < now - timedelta(days=366):
+        raise ReceiptDateUnreadableError('Nie udało się wiarygodnie odczytać daty paragonu. Wpisz datę zakupu ręcznie.')
     return purchased_at.isoformat()
 
 
