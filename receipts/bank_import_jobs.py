@@ -1,15 +1,17 @@
 import logging
 import time
+
 from django.db import OperationalError, close_old_connections, transaction
 from django.utils import timezone
-from .bank_parsers import parse_bank_csv
-from .models import BankImportJob, BankTransaction
+
 from . import openai_bank_transactions
+from .bank_parsers import parse_bank_csv
+from .models import BankImportJob, BankTransaction, Receipt
 from .openai_bank_transactions import BankClassificationError
+from .profile_access import ProfilePrincipal
 from .services import match_bank_transactions_for_receipt
 from .undo_service import record_undo
 from .utils import normalize_text
-from .views import visible_receipts
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,17 @@ def _allow_long_background_openai_calls():
     openai_bank_transactions.OPENAI_REQUEST_TIMEOUT_SECONDS = BACKGROUND_IMPORT_TIMEOUT_SECONDS
 
 
-def _transaction_identity_filter(job, row):
-    scope = {'user': job.user, 'bank': job.bank}
+def _job_scope(job):
     if job.family_id:
-        scope = {'family': job.family, 'bank': job.bank}
+        return {'family': job.family, 'bank': job.bank}
+    if job.profile_id:
+        return {'profile': job.profile, 'bank': job.bank}
+    return {'user': job.user, 'bank': job.bank}
+
+
+def _transaction_identity_filter(job, row):
     return {
-        **scope,
+        **_job_scope(job),
         'booked_at': row.get('booked_at'),
         'transaction_at': row.get('transaction_at'),
         'amount': row.get('amount'),
@@ -86,8 +93,7 @@ def _transaction_identity_filter(job, row):
 
 
 def _remove_existing_exact_duplicates(job):
-    qs = BankTransaction.objects.filter(bank=job.bank)
-    qs = qs.filter(family=job.family) if job.family_id else qs.filter(user=job.user)
+    qs = BankTransaction.objects.filter(**_job_scope(job))
     seen = {}
     duplicate_ids = []
     fields = ('booked_at', 'transaction_at', 'amount', 'currency', 'raw_description')
@@ -106,6 +112,15 @@ def _remove_existing_exact_duplicates(job):
     return len(duplicate_ids)
 
 
+def _job_receipts(job):
+    qs = Receipt.objects.filter(duplicate_of__isnull=True)
+    if job.family_id:
+        return qs.filter(family=job.family)
+    if job.profile_id:
+        return qs.filter(profile=job.profile)
+    return qs.filter(user=job.user)
+
+
 def _store_import_result(job, parsed_rows, classifications):
     def operation():
         with transaction.atomic():
@@ -116,7 +131,14 @@ def _store_import_result(job, parsed_rows, classifications):
                 existing = BankTransaction.objects.filter(**_transaction_identity_filter(job, row)).order_by('id').first()
                 if existing:
                     continue
-                tx = BankTransaction.objects.create(user=job.user, family=job.family, bank=job.bank, source_file_name=job.source_file_name, **row)
+                tx = BankTransaction.objects.create(
+                    profile=job.profile,
+                    user=job.user,
+                    family=job.family,
+                    bank=job.bank,
+                    source_file_name=job.source_file_name,
+                    **row,
+                )
                 tx.corrected_description = data.get('corrected_description') or tx.raw_description or tx.merchant_name or ''
                 tx.merchant_name = tx.merchant_name or data.get('merchant_name') or ''
                 tx.merchant_normalized = normalize_text(tx.merchant_name)
@@ -128,7 +150,7 @@ def _store_import_result(job, parsed_rows, classifications):
                 tx.save(update_fields=['corrected_description', 'merchant_name', 'merchant_normalized', 'transaction_type', 'category', 'subcategory', 'classification_source', 'raw_classification_json'])
                 created_ids.append(tx.id)
                 classified += 1
-            for receipt in visible_receipts(job.user).filter(duplicate_of__isnull=True):
+            for receipt in _job_receipts(job):
                 match_bank_transactions_for_receipt(receipt)
             job.status = BankImportJob.STATUS_COMPLETED
             job.progress_current = len(parsed_rows)
@@ -139,7 +161,7 @@ def _store_import_result(job, parsed_rows, classifications):
             job.save(update_fields=['status', 'progress_current', 'created_count', 'classified_count', 'error_message', 'finished_at', 'updated_at'])
             if created_ids:
                 record_undo(
-                    job.user,
+                    job.user if job.user_id else ProfilePrincipal(job.profile),
                     'bank_import',
                     f'Import wyciągu {job.bank.upper()} ({len(created_ids)} transakcji)',
                     {'action': 'delete_bank_import', 'transaction_ids': created_ids, 'job_id': str(job.id)},
@@ -150,7 +172,7 @@ def _store_import_result(job, parsed_rows, classifications):
 
 def process_bank_import_job(job_id):
     close_old_connections()
-    job = _with_db_retry(lambda: BankImportJob.objects.select_related('user', 'family').get(id=job_id))
+    job = _with_db_retry(lambda: BankImportJob.objects.select_related('profile__user', 'profile__family', 'user', 'family').get(id=job_id))
     if job.status not in [BankImportJob.STATUS_QUEUED, BankImportJob.STATUS_RUNNING]:
         return job
 
