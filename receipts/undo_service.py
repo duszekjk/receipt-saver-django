@@ -2,28 +2,36 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import BankImportJob, BankTransaction, MatchCandidate, Receipt, ReceiptItem, UndoOperation
+from .profile_access import family_for, profile_for
 
 UNDO_LIMIT = 5
 
 
-def operation_scope(user):
-    profile = getattr(user, 'receipt_profile', None)
-    family = profile.family if profile and profile.family_id else None
-    return {'family': family} if family else {'user': user, 'family__isnull': True}
+def operation_scope(principal):
+    profile = profile_for(principal)
+    family = family_for(principal)
+    if family:
+        return {'family': family}
+    if profile:
+        return {'profile': profile, 'family__isnull': True}
+    return {'pk__in': []}
 
 
-def record_undo(user, operation_type, label, payload):
-    profile = getattr(user, 'receipt_profile', None)
-    family = profile.family if profile and profile.family_id else None
+def record_undo(principal, operation_type, label, payload):
+    profile = profile_for(principal)
+    if profile is None:
+        raise ValueError('Brak profilu Receipt Saver dla operacji cofania.')
+    family = family_for(principal)
     operation = UndoOperation.objects.create(
-        user=user,
+        profile=profile,
+        user=profile.user,
         family=family,
         operation_type=operation_type,
         label=label,
         payload=payload,
     )
     stale = list(
-        UndoOperation.objects.filter(**operation_scope(user), undone_at__isnull=True)
+        UndoOperation.objects.filter(**operation_scope(principal), undone_at__isnull=True)
         .order_by('-created_at', '-id')
         .values_list('id', flat=True)[UNDO_LIMIT:]
     )
@@ -32,14 +40,15 @@ def record_undo(user, operation_type, label, payload):
     return operation
 
 
-def latest_undo(user):
-    return UndoOperation.objects.filter(**operation_scope(user), undone_at__isnull=True).first()
+def latest_undo(principal):
+    return UndoOperation.objects.filter(**operation_scope(principal), undone_at__isnull=True).first()
 
 
 def serialize_undo(operation):
     if not operation:
         return {'can_undo': False, 'label': '', 'remaining': 0}
-    remaining = UndoOperation.objects.filter(**operation_scope(operation.user), undone_at__isnull=True).count()
+    scope = {'family': operation.family} if operation.family_id else {'profile': operation.profile, 'family__isnull': True}
+    remaining = UndoOperation.objects.filter(**scope, undone_at__isnull=True).count()
     return {
         'can_undo': True,
         'label': operation.label,
@@ -52,6 +61,7 @@ def serialize_undo(operation):
 def snapshot_receipt(receipt):
     return {
         'id': receipt.id,
+        'profile_id': receipt.profile_id,
         'user_id': receipt.user_id,
         'family_id': receipt.family_id,
         'image': receipt.image.name if receipt.image else '',
@@ -101,10 +111,10 @@ def restore_receipt(snapshot):
     return receipt
 
 
-def undo_latest(user):
+def undo_latest(principal):
     with transaction.atomic():
         operation = UndoOperation.objects.select_for_update().filter(
-            **operation_scope(user), undone_at__isnull=True
+            **operation_scope(principal), undone_at__isnull=True
         ).first()
         if not operation:
             return None
