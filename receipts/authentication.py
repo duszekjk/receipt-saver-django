@@ -1,10 +1,13 @@
 import hashlib
 import hmac
 from datetime import timedelta
+
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import authentication, exceptions
+
 from .models import AppLoginNonce, AppLoginToken
+from .profile_access import ProfilePrincipal
 
 
 class AppTokenAuthentication(authentication.BaseAuthentication):
@@ -21,7 +24,10 @@ class AppTokenAuthentication(authentication.BaseAuthentication):
             return None
 
         try:
-            token = AppLoginToken.objects.select_related('profile__user').get(device_id=device_id, is_active=True)
+            token = AppLoginToken.objects.select_related('profile__user', 'profile__family').get(
+                device_id=device_id,
+                is_active=True,
+            )
         except AppLoginToken.DoesNotExist:
             raise exceptions.AuthenticationFailed('Invalid device token')
 
@@ -44,10 +50,16 @@ class AppTokenAuthentication(authentication.BaseAuthentication):
             nonce,
             body_hash,
         ])
-        expected = hmac.new(token.secret_key.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
+        expected = hmac.new(
+            token.secret_key.encode('utf-8'),
+            payload.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise exceptions.AuthenticationFailed('Invalid signature')
 
         AppLoginNonce.objects.create(token=token, nonce=nonce, timestamp=ts)
         token.mark_used()
-        return token.profile.user, token
+
+        principal = token.profile.user if token.profile.user_id else ProfilePrincipal(token.profile)
+        return principal, token
