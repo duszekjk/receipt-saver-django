@@ -4,7 +4,8 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.response import Response
 from .bank_import_jobs import process_bank_import_job, serialize_bank_import_job
 from .models import BankImportJob
-from .views import API_AUTHENTICATION, user_family
+from .profile_access import owner_values, visible_bank_import_jobs
+from .views import API_AUTHENTICATION
 
 
 def _start_background_import(job_id):
@@ -21,30 +22,21 @@ def import_bank_statement(request):
     if not file:
         return Response({'detail': 'Missing file'}, status=400)
 
-    family = user_family(request.user)
     job = BankImportJob.objects.create(
-        user=request.user,
-        family=family,
         bank=bank,
         source_file=file,
         source_file_name=file.name,
+        **owner_values(request.user),
     )
     _start_background_import(str(job.id))
     return Response(serialize_bank_import_job(job), status=202)
-
-
-def _visible_jobs_for_user(user):
-    qs = BankImportJob.objects.all()
-    if not user.is_superuser:
-        qs = qs.filter(user=user)
-    return qs
 
 
 @api_view(['GET'])
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def latest_bank_import_status(request):
-    job = _visible_jobs_for_user(request.user).order_by('-created_at').first()
+    job = visible_bank_import_jobs(request.user).order_by('-created_at').first()
     if not job:
         return Response({'detail': 'Import job not found'}, status=404)
     return Response(serialize_bank_import_job(job))
@@ -54,7 +46,7 @@ def latest_bank_import_status(request):
 @authentication_classes(API_AUTHENTICATION)
 @permission_classes([permissions.IsAuthenticated])
 def bank_import_status(request, job_id):
-    job = _visible_jobs_for_user(request.user).filter(id=job_id).first()
+    job = visible_bank_import_jobs(request.user).filter(id=job_id).first()
     if not job:
         return Response({'detail': 'Import job not found'}, status=404)
     return Response(serialize_bank_import_job(job))
