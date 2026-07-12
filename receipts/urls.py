@@ -1,12 +1,13 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from . import bank_import_views, bank_transaction_item_views, dashboard_views, email_import_views, match_review_views, receipt_edit_views, undo_views
+from . import bank_import_views, bank_transaction_item_views, dashboard_views, email_import_views, guest_views, match_review_views, receipt_edit_views, undo_views
 from .views import ReceiptViewSet, match_candidates, me, scan_receipt, set_receipt_date, summaries
 
 router = DefaultRouter()
 router.register('receipts', ReceiptViewSet, basename='receipts')
 
 urlpatterns = [
+    path('guest/register/', guest_views.register_guest),
     path('me/', me),
     path('dashboard/', dashboard_views.dashboard),
     path('dashboard/subcategory/', dashboard_views.dashboard_subcategory_details),
