@@ -13,7 +13,7 @@ from .models import MatchCandidate
 from .openai_receipts import ReceiptParseError, ReceiptUnreadableError
 from .profile_access import family_for, profile_for, visible_bank_transactions, visible_receipts
 from .serializers import MatchCandidateSerializer, ReceiptSerializer
-from .services import create_receipt_from_image, match_bank_transactions_for_receipt
+from .services import DuplicateReceiptError, create_receipt_from_image, match_bank_transactions_for_receipt
 
 API_AUTHENTICATION = [AppTokenAuthentication]
 
@@ -134,6 +134,12 @@ def scan_receipt(request):
         return Response({'detail': 'Brak zdjęcia paragonu.', 'code': 'missing_image'}, status=400)
     try:
         receipt = create_receipt_from_image(request.user, image)
+    except DuplicateReceiptError as error:
+        return Response({
+            'detail': str(error),
+            'code': 'receipt_duplicate',
+            'duplicate_receipt_id': error.duplicate.id,
+        }, status=409)
     except ReceiptUnreadableError as error:
         return Response({'detail': str(error), 'code': 'receipt_unreadable'}, status=422)
     except ReceiptParseError as error:
