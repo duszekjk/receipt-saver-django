@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
 from .openai_receipts import parse_receipt_image
+from .profile_access import family_for, owner_values, profile_for
 from .undo_service import record_undo
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
@@ -18,13 +19,13 @@ CARD_BANK_MIN_MATCHES = 40
 CARD_BANK_MIN_SHARE = 0.90
 
 
-def user_family(user):
-    profile = getattr(user, 'receipt_profile', None)
-    return profile.family if profile and profile.family_id else None
+def user_family(principal):
+    return family_for(principal)
 
 
-def create_receipt_from_image(user, image_file) -> Receipt:
-    receipt = Receipt.objects.create(user=user, family=user_family(user), image=image_file)
+def create_receipt_from_image(principal, image_file) -> Receipt:
+    owner = owner_values(principal)
+    receipt = Receipt.objects.create(image=image_file, **owner)
     try:
         data = parse_receipt_image(receipt.image.path)
     except Exception:
@@ -47,7 +48,20 @@ def create_receipt_from_image(user, image_file) -> Receipt:
     receipt.save()
     for item in data.get('items', []):
         name = item.get('name') or ''
-        ReceiptItem.objects.create(receipt=receipt, name=name, name_normalized=normalize_text(name), quantity=item.get('quantity'), unit_price=item.get('unit_price'), paid_price=item.get('paid_price') or 0, regular_price=item.get('regular_price'), discount_amount=item.get('discount_amount') or 0, promotion_name=item.get('promotion_name') or '', is_discounted=bool(item.get('is_discounted')), category=item.get('category') or '', subcategory=item.get('subcategory') or '')
+        ReceiptItem.objects.create(
+            receipt=receipt,
+            name=name,
+            name_normalized=normalize_text(name),
+            quantity=item.get('quantity'),
+            unit_price=item.get('unit_price'),
+            paid_price=item.get('paid_price') or 0,
+            regular_price=item.get('regular_price'),
+            discount_amount=item.get('discount_amount') or 0,
+            promotion_name=item.get('promotion_name') or '',
+            is_discounted=bool(item.get('is_discounted')),
+            category=item.get('category') or '',
+            subcategory=item.get('subcategory') or '',
+        )
     duplicate = find_duplicate_receipt(receipt)
     if duplicate:
         receipt.duplicate_of = duplicate
@@ -55,7 +69,7 @@ def create_receipt_from_image(user, image_file) -> Receipt:
     if receipt.purchased_at:
         match_bank_transactions_for_receipt(receipt)
     record_undo(
-        user,
+        principal,
         'receipt_scan',
         f'Skan paragonu {receipt.merchant_name or "bez nazwy"}',
         {'action': 'delete_receipt', 'receipt_id': receipt.id},
@@ -77,9 +91,19 @@ def receipt_similarity(a: Receipt, b: Receipt):
     return score, {'amount': amount, 'date_time': date_score, 'merchant': merchant, 'items': items}
 
 
+def _same_owner_queryset(model, obj):
+    qs = model.objects.all()
+    if obj.family_id:
+        return qs.filter(family=obj.family)
+    if obj.profile_id:
+        return qs.filter(profile=obj.profile)
+    if obj.user_id:
+        return qs.filter(user=obj.user)
+    return qs.none()
+
+
 def find_duplicate_receipt(receipt: Receipt):
-    qs = Receipt.objects.exclude(id=receipt.id)
-    qs = qs.filter(family=receipt.family) if receipt.family_id else qs.filter(user=receipt.user)
+    qs = _same_owner_queryset(Receipt, receipt).exclude(id=receipt.id)
     if receipt.receipt_barcode:
         barcode_duplicate = qs.filter(receipt_barcode=receipt.receipt_barcode).order_by('id').first()
         if barcode_duplicate:
@@ -136,8 +160,7 @@ def _learned_bank_for_card(receipt):
     card = _receipt_card_last4(receipt)
     if not card:
         return None, 0, 0.0
-    receipts = Receipt.objects.filter(raw_openai_json__payment_card_last4=card, banktransaction__isnull=False)
-    receipts = receipts.filter(family=receipt.family) if receipt.family_id else receipts.filter(user=receipt.user)
+    receipts = _same_owner_queryset(Receipt, receipt).filter(raw_openai_json__payment_card_last4=card, banktransaction__isnull=False)
     banks = list(receipts.values_list('banktransaction__bank', flat=True))
     if len(banks) < CARD_BANK_MIN_MATCHES:
         return None, len(banks), 0.0
@@ -202,10 +225,10 @@ def match_bank_transactions_for_receipt(receipt):
         return []
     start = receipt.purchased_at.date() - timedelta(days=1)
     end = receipt.purchased_at.date() + timedelta(days=1)
-    candidates = BankTransaction.objects.filter(matched_receipt__isnull=True, amount__lt=0).filter(
-        Q(booked_at__range=[start, end]) | Q(transaction_at__range=[start, end])
-    )
-    candidates = candidates.filter(family=receipt.family) if receipt.family_id else candidates.filter(user=receipt.user)
+    candidates = _same_owner_queryset(BankTransaction, receipt).filter(
+        matched_receipt__isnull=True,
+        amount__lt=0,
+    ).filter(Q(booked_at__range=[start, end]) | Q(transaction_at__range=[start, end]))
     results = []
     for tx in candidates:
         score, reason = match_score(receipt, tx)
