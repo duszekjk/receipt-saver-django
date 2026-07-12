@@ -21,7 +21,15 @@ class ReceiptUserProfile(models.Model):
     ROLE_MEMBER = 'member'
     ROLE_MANAGER = 'manager'
 
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, related_name='receipt_profile', on_delete=models.CASCADE)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        related_name='receipt_profile',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    is_guest = models.BooleanField(default=False, db_index=True)
     family = models.ForeignKey(Family, related_name='members', null=True, blank=True, on_delete=models.SET_NULL)
     display_name = models.CharField(max_length=160, blank=True)
     description = models.TextField(blank=True)
@@ -30,7 +38,11 @@ class ReceiptUserProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return self.display_name or self.user.get_username()
+        if self.display_name:
+            return self.display_name
+        if self.user_id:
+            return self.user.get_username()
+        return f'Gość {str(self.public_id)[:8]}'
 
 
 class AppLoginToken(models.Model):
@@ -77,7 +89,8 @@ class AppLoginNonce(models.Model):
 
 
 class Receipt(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='receipts', null=True, blank=True, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     image = models.ImageField(upload_to='receipts/%Y/%m/')
     merchant_name = models.CharField(max_length=255, blank=True)
@@ -121,7 +134,8 @@ class BankTransaction(models.Model):
     TRANSACTION_INTERNAL = 'internal_transfer'
     TRANSACTION_NEUTRAL = 'neutral'
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='bank_transactions', null=True, blank=True, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     bank = models.CharField(max_length=32, default='unknown')
     booked_at = models.DateField(null=True, blank=True, db_index=True)
@@ -150,7 +164,8 @@ class BankImportJob(models.Model):
     STATUS_FAILED = 'failed'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='bank_import_jobs', null=True, blank=True, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.SET_NULL)
     bank = models.CharField(max_length=32, default='unknown')
     source_file = models.FileField(upload_to='bank_imports/%Y/%m/')
@@ -183,7 +198,8 @@ class MatchCandidate(models.Model):
 
 
 class UndoOperation(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='undo_operations', null=True, blank=True, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     family = models.ForeignKey(Family, null=True, blank=True, on_delete=models.CASCADE)
     operation_type = models.CharField(max_length=64)
     label = models.CharField(max_length=255)
