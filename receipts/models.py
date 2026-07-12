@@ -28,7 +28,10 @@ class ReceiptUserProfile(models.Model):
         blank=True,
         on_delete=models.CASCADE,
     )
-    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # Nullable during the transition from existing profiles. A callable default on a
+    # newly-added unique field is evaluated only once while migrating old rows, which
+    # would give every row the same UUID. New profiles receive an ID in save().
+    public_id = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     is_guest = models.BooleanField(default=False, db_index=True)
     family = models.ForeignKey(Family, related_name='members', null=True, blank=True, on_delete=models.SET_NULL)
     display_name = models.CharField(max_length=160, blank=True)
@@ -36,6 +39,11 @@ class ReceiptUserProfile(models.Model):
     photo = models.ImageField(upload_to='receipt_profiles/', null=True, blank=True)
     role = models.CharField(max_length=24, choices=[(ROLE_MEMBER, 'Member'), (ROLE_MANAGER, 'Family manager')], default=ROLE_MEMBER)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.public_id:
+            self.public_id = uuid.uuid4()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         if self.display_name:
