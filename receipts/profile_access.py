@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from django.db.models import Q
+
 from .models import BankImportJob, BankTransaction, Receipt, ReceiptUserProfile, UndoOperation
 
 
@@ -35,10 +37,7 @@ class ProfilePrincipal:
 
 
 def profile_for(principal):
-    profile = getattr(principal, 'receipt_profile', None)
-    if profile is not None:
-        return profile
-    return None
+    return getattr(principal, 'receipt_profile', None)
 
 
 def family_for(principal):
@@ -65,6 +64,8 @@ def _visible(queryset, principal):
         return queryset.none()
     if profile.family_id:
         return queryset.filter(family=profile.family)
+    if profile.user_id:
+        return queryset.filter(Q(profile=profile) | Q(profile__isnull=True, user=profile.user))
     return queryset.filter(profile=profile)
 
 
