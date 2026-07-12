@@ -1,12 +1,15 @@
 from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
+
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+
 from .models import BankTransaction, MatchCandidate, Receipt, ReceiptItem
 from .openai_receipts import parse_receipt_image
-from .profile_access import family_for, owner_values, profile_for
+from .profile_access import family_for, owner_values
 from .undo_service import record_undo
 from .utils import build_receipt_fingerprint, money_similarity, normalize_text, text_similarity
 
@@ -19,8 +22,22 @@ CARD_BANK_MIN_MATCHES = 40
 CARD_BANK_MIN_SHARE = 0.90
 
 
+class DuplicateReceiptError(ValueError):
+    def __init__(self, duplicate):
+        self.duplicate = duplicate
+        super().__init__('Ten paragon został już wcześniej zeskanowany.')
+
+
 def user_family(principal):
     return family_for(principal)
+
+
+def _delete_receipt_and_image(receipt):
+    image_name = receipt.image.name if receipt.image else ''
+    storage = receipt.image.storage if receipt.image else None
+    receipt.delete()
+    if storage and image_name:
+        storage.delete(image_name)
 
 
 def create_receipt_from_image(principal, image_file) -> Receipt:
@@ -28,53 +45,67 @@ def create_receipt_from_image(principal, image_file) -> Receipt:
     receipt = Receipt.objects.create(image=image_file, **owner)
     try:
         data = parse_receipt_image(receipt.image.path)
-    except Exception:
-        receipt.delete()
+        data['_ocr_image_path'] = receipt.image.path
+        data['_ocr_image_source'] = 'original'
+        purchased_at = parse_datetime(data.get('purchased_at') or '')
+        if purchased_at and timezone.is_naive(purchased_at):
+            purchased_at = timezone.make_aware(purchased_at, timezone.get_current_timezone())
+
+        with transaction.atomic():
+            receipt.merchant_name = data.get('merchant_name') or ''
+            receipt.merchant_normalized = normalize_text(receipt.merchant_name)
+            receipt.receipt_barcode = data.get('receipt_barcode') or ''
+            receipt.purchased_at = purchased_at
+            receipt.total_amount = data.get('total_amount')
+            receipt.currency = data.get('currency') or 'PLN'
+            receipt.payment_method = data.get('payment_method') or ''
+            receipt.raw_openai_json = data
+            receipt.content_fingerprint = build_receipt_fingerprint(data)
+            receipt.save()
+
+            for item in data.get('items', []):
+                name = item.get('name') or ''
+                ReceiptItem.objects.create(
+                    receipt=receipt,
+                    name=name,
+                    name_normalized=normalize_text(name),
+                    quantity=item.get('quantity'),
+                    unit_price=item.get('unit_price'),
+                    paid_price=item.get('paid_price') or 0,
+                    regular_price=item.get('regular_price'),
+                    discount_amount=item.get('discount_amount') or 0,
+                    promotion_name=item.get('promotion_name') or '',
+                    is_discounted=bool(item.get('is_discounted')),
+                    category=item.get('category') or '',
+                    subcategory=item.get('subcategory') or '',
+                )
+
+            confirmed_duplicate = find_confirmed_duplicate_receipt(receipt)
+            if confirmed_duplicate:
+                raise DuplicateReceiptError(confirmed_duplicate)
+
+            possible_duplicate = find_duplicate_receipt(receipt)
+            if possible_duplicate:
+                receipt.duplicate_of = possible_duplicate
+                receipt.save(update_fields=['duplicate_of'])
+
+            if receipt.purchased_at:
+                match_bank_transactions_for_receipt(receipt)
+
+            record_undo(
+                principal,
+                'receipt_scan',
+                f'Skan paragonu {receipt.merchant_name or "bez nazwy"}',
+                {'action': 'delete_receipt', 'receipt_id': receipt.id},
+            )
+        return receipt
+    except DuplicateReceiptError:
+        _delete_receipt_and_image(receipt)
         raise
-    data['_ocr_image_path'] = receipt.image.path
-    data['_ocr_image_source'] = 'original'
-    purchased_at = parse_datetime(data.get('purchased_at') or '')
-    if purchased_at and timezone.is_naive(purchased_at):
-        purchased_at = timezone.make_aware(purchased_at, timezone.get_current_timezone())
-    receipt.merchant_name = data.get('merchant_name') or ''
-    receipt.merchant_normalized = normalize_text(receipt.merchant_name)
-    receipt.receipt_barcode = data.get('receipt_barcode') or ''
-    receipt.purchased_at = purchased_at
-    receipt.total_amount = data.get('total_amount')
-    receipt.currency = data.get('currency') or 'PLN'
-    receipt.payment_method = data.get('payment_method') or ''
-    receipt.raw_openai_json = data
-    receipt.content_fingerprint = build_receipt_fingerprint(data)
-    receipt.save()
-    for item in data.get('items', []):
-        name = item.get('name') or ''
-        ReceiptItem.objects.create(
-            receipt=receipt,
-            name=name,
-            name_normalized=normalize_text(name),
-            quantity=item.get('quantity'),
-            unit_price=item.get('unit_price'),
-            paid_price=item.get('paid_price') or 0,
-            regular_price=item.get('regular_price'),
-            discount_amount=item.get('discount_amount') or 0,
-            promotion_name=item.get('promotion_name') or '',
-            is_discounted=bool(item.get('is_discounted')),
-            category=item.get('category') or '',
-            subcategory=item.get('subcategory') or '',
-        )
-    duplicate = find_duplicate_receipt(receipt)
-    if duplicate:
-        receipt.duplicate_of = duplicate
-        receipt.save(update_fields=['duplicate_of'])
-    if receipt.purchased_at:
-        match_bank_transactions_for_receipt(receipt)
-    record_undo(
-        principal,
-        'receipt_scan',
-        f'Skan paragonu {receipt.merchant_name or "bez nazwy"}',
-        {'action': 'delete_receipt', 'receipt_id': receipt.id},
-    )
-    return receipt
+    except Exception:
+        if receipt.pk and Receipt.objects.filter(pk=receipt.pk).exists():
+            _delete_receipt_and_image(receipt)
+        raise
 
 
 def receipt_similarity(a: Receipt, b: Receipt):
@@ -102,12 +133,26 @@ def _same_owner_queryset(model, obj):
     return qs.none()
 
 
-def find_duplicate_receipt(receipt: Receipt):
+def find_confirmed_duplicate_receipt(receipt: Receipt):
     qs = _same_owner_queryset(Receipt, receipt).exclude(id=receipt.id)
     if receipt.receipt_barcode:
-        barcode_duplicate = qs.filter(receipt_barcode=receipt.receipt_barcode).order_by('id').first()
-        if barcode_duplicate:
-            return barcode_duplicate
+        duplicate = qs.filter(receipt_barcode=receipt.receipt_barcode).order_by('id').first()
+        if duplicate:
+            return duplicate
+
+    if not receipt.purchased_at or not receipt.content_fingerprint:
+        return None
+
+    return qs.filter(
+        purchased_at__date=receipt.purchased_at.date(),
+        total_amount=receipt.total_amount,
+        merchant_normalized=receipt.merchant_normalized,
+        content_fingerprint=receipt.content_fingerprint,
+    ).order_by('id').first()
+
+
+def find_duplicate_receipt(receipt: Receipt):
+    qs = _same_owner_queryset(Receipt, receipt).exclude(id=receipt.id)
     qs = qs.filter(total_amount__isnull=False)
     if receipt.purchased_at:
         qs = qs.filter(purchased_at__date__range=[receipt.purchased_at.date() - timedelta(days=1), receipt.purchased_at.date() + timedelta(days=1)])
