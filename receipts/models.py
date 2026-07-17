@@ -28,9 +28,6 @@ class ReceiptUserProfile(models.Model):
         blank=True,
         on_delete=models.CASCADE,
     )
-    # Nullable during the transition from existing profiles. A callable default on a
-    # newly-added unique field is evaluated only once while migrating old rows, which
-    # would give every row the same UUID. New profiles receive an ID in save().
     public_id = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     is_guest = models.BooleanField(default=False, db_index=True)
     family = models.ForeignKey(Family, related_name='members', null=True, blank=True, on_delete=models.SET_NULL)
@@ -134,6 +131,24 @@ class ReceiptItem(models.Model):
     is_discounted = models.BooleanField(default=False)
     category = models.CharField(max_length=100, blank=True, db_index=True)
     subcategory = models.CharField(max_length=100, blank=True, db_index=True)
+
+
+class ProductCycleRule(models.Model):
+    profile = models.ForeignKey(ReceiptUserProfile, related_name='product_cycle_rules', on_delete=models.CASCADE)
+    product_name = models.CharField(max_length=255)
+    product_name_normalized = models.CharField(max_length=255, db_index=True)
+    interval_days = models.PositiveIntegerField()
+    reminder_before_days = models.PositiveIntegerField(default=1)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('profile', 'product_name_normalized')]
+        ordering = ['product_name_normalized']
+
+    def __str__(self):
+        return f'{self.product_name}: {self.interval_days} dni'
 
 
 class BankTransaction(models.Model):
